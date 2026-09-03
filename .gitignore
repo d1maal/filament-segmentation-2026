@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+data/
+outputs/
+*.zip
+.env
+.kaggle/
+*.pt
+*.pth
+wandb/

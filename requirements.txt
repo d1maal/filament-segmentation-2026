@@ -1,0 +1,8 @@
+numpy>=1.24
+opencv-python>=4.8
+pycocotools>=2.0.7
+tqdm>=4.66
+# Kaggle GPU only (torch is already there):
+transformers>=4.40
+accelerate>=0.30
+safetensors>=0.4
