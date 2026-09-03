@@ -133,8 +133,6 @@ def train(size: int = 512, epochs: int = 8, max_steps: int = 0, accum: int = 8, 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     processor, model = build(size)
     model.to(device).train()
-    if hasattr(model, "gradient_checkpointing_enable"):
-        model.gradient_checkpointing_enable()
     data = Magfilo(size=size)
     if not data:
         raise SystemExit("Empty train split")
