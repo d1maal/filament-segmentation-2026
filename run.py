@@ -39,17 +39,18 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
     print(f"Wrote {path} ({len(rows)} rows)")
 
 
-def _iter_val():
+def _val_items():
     coco = load_coco()
     val = ensure_val_split(coco)
+    items = []
     for info in coco.imgs.values():
         if image_stem(info["file_name"]) not in val:
             continue
         path = resolve_image(TRAIN_IMAGES, info["file_name"])
         if path is None:
             continue
-        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-        yield info, img, instances_for_image(coco, info["id"])
+        items.append((coco, info, path))
+    return items
 
 
 def cmd_check() -> None:
@@ -69,8 +70,14 @@ def cmd_check() -> None:
 
 
 def cmd_baseline(submit: bool, viz: int) -> None:
+    from tqdm import tqdm
+
+    items = _val_items()
+    print(f"baseline val: {len(items)} images", flush=True)
     rows = []
-    for info, img, gt in _iter_val():
+    for coco, info, path in tqdm(items, desc="baseline"):
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        gt = instances_for_image(coco, info["id"])
         pred = predict_instances(img)
         metrics = panoptic_quality(gt, pred)
         metrics["stem"] = image_stem(info["file_name"])
@@ -106,6 +113,7 @@ def cmd_train(smoke: bool, size: int, epochs: int, max_steps: int) -> None:
 
 def cmd_infer(submit: bool, weights: Path | None) -> None:
     import torch
+    from tqdm import tqdm
     from src.m2f import build, predict_masks
 
     weights = weights or (OUTPUTS / "m2f" / "last.pt")
@@ -121,7 +129,11 @@ def cmd_infer(submit: bool, weights: Path | None) -> None:
     model.to(device).eval()
 
     rows = []
-    for info, img, gt in _iter_val():
+    items = _val_items()
+    print(f"infer val: {len(items)} images", flush=True)
+    for coco, info, path in tqdm(items, desc="infer"):
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        gt = instances_for_image(coco, info["id"])
         pred = predict_masks(model, processor, img, device)
         metrics = panoptic_quality(gt, pred)
         metrics["stem"] = image_stem(info["file_name"])

@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 
-def predict_instances(image: np.ndarray, min_area: int = 80) -> list[np.ndarray]:
+def predict_instances(image: np.ndarray, min_area: int = 80, max_instances: int = 150) -> list[np.ndarray]:
     """Invert H-alpha, keep the disk, Otsu, connected components. Ruler, not a model."""
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (0, 0), 3)
@@ -21,4 +21,7 @@ def predict_instances(image: np.ndarray, min_area: int = 80) -> list[np.ndarray]
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
     n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
-    return [(labels == lab).astype(np.uint8) for lab in range(1, n) if int(stats[lab, cv2.CC_STAT_AREA]) >= min_area]
+    labs = [lab for lab in range(1, n) if int(stats[lab, cv2.CC_STAT_AREA]) >= min_area]
+    labs.sort(key=lambda lab: int(stats[lab, cv2.CC_STAT_AREA]), reverse=True)
+    labs = labs[:max_instances]
+    return [(labels == lab).astype(np.uint8) for lab in labs]
