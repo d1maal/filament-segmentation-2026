@@ -103,12 +103,12 @@ def cmd_baseline(submit: bool, viz: int) -> None:
         _write_csv(OUTPUTS / "submission_baseline.csv", csv_rows)
 
 
-def cmd_train(smoke: bool, size: int, epochs: int, max_steps: int) -> None:
+def cmd_train(smoke: bool, size: int, epochs: int, max_steps: int, accum: int) -> None:
     from src.m2f import train
 
     if smoke:
         epochs, max_steps = 1, max_steps or 30
-    train(size=size, epochs=epochs, max_steps=max_steps)
+    train(size=size, epochs=epochs, max_steps=max_steps, accum=accum)
 
 
 def cmd_infer(submit: bool, weights: Path | None) -> None:
@@ -163,6 +163,7 @@ def main() -> None:
     t.add_argument("--size", type=int, default=512)
     t.add_argument("--epochs", type=int, default=8)
     t.add_argument("--max-steps", type=int, default=0)
+    t.add_argument("--accum", type=int, default=8, help="Gradient accumulation steps")
     i = sub.add_parser("infer")
     i.add_argument("--submit", action="store_true")
     i.add_argument("--weights", type=Path, default=None)
@@ -172,7 +173,7 @@ def main() -> None:
     elif args.cmd == "baseline":
         cmd_baseline(args.submit, args.viz)
     elif args.cmd == "train":
-        cmd_train(args.smoke, args.size, args.epochs, args.max_steps)
+        cmd_train(args.smoke, args.size, args.epochs, args.max_steps, args.accum)
     else:
         cmd_infer(args.submit, args.weights)
 
