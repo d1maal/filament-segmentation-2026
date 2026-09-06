@@ -134,7 +134,13 @@ def cmd_baseline(submit: bool, viz: int) -> None:
         _write_csv(config.submission_baseline_path, csv_rows)
 
 
-def cmd_train(smoke: bool, size: int, epochs: int, max_steps: int, accum: int) -> None:
+def cmd_train(
+    smoke: bool,
+    size: int,
+    epochs: int,
+    max_steps: int,
+    accum: int,
+) -> None:
     """Запускает обучение Mask2Former с заданными параметрами; в smoke-режиме ограничивает обучение одной эпохой и тридцатью шагами.
     params:
         smoke: флаг быстрого проверочного прогона
@@ -214,6 +220,10 @@ def cmd_infer(submit: bool, weights: Path | None) -> None:
 
 def main() -> None:
     """Точка входа CLI: разбирает аргументы и диспетчеризует команды check, baseline, train и infer."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check")
@@ -235,7 +245,13 @@ def main() -> None:
     elif args.cmd == "baseline":
         cmd_baseline(args.submit, args.viz)
     elif args.cmd == "train":
-        cmd_train(args.smoke, args.size, args.epochs, args.max_steps, args.accum)
+        cmd_train(
+            args.smoke,
+            args.size,
+            args.epochs,
+            args.max_steps,
+            args.accum,
+        )
     elif args.cmd == "infer":
         cmd_infer(args.submit, args.weights)
     else:

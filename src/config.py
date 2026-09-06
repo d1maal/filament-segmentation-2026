@@ -4,7 +4,10 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 
 
 def _discover_dataset_root() -> Path:
@@ -43,8 +46,24 @@ def _discover_outputs_path() -> Path:
 
 
 @dataclass
+class DagshubConfig:
+    """Хранит настройки логирования экспериментов в DagsHub."""
+
+    repo_owner: str = os.environ.get("DAGSHUB_REPO_OWNER", "BraveCactus")
+    repo_name: str = os.environ.get("DAGSHUB_REPO_NAME", "solar-filament-segmentation")
+    experiment_name: str = os.environ.get("DAGSHUB_EXPERIMENT_NAME", "Test_Experiment_1")
+    token: str = os.environ.get("DAGSHUB_TOKEN", "")
+    mlflow_run_name: str = "m2f"
+
+    @property
+    def configured(self) -> bool:
+        """Возвращает признак того, что логирование настроено: владелец, репозиторий и токен заданы."""
+        return bool(self.repo_owner and self.repo_name and self.token)
+
+
+@dataclass
 class Config:
-    """Хранит все пути проекта и служебные настройки логирования."""
+    """Хранит все пути проекта и настройки логирования в DagsHub."""
 
     root: Path = ROOT
     dataset_path: Path = field(default_factory=_discover_dataset_root)
@@ -57,10 +76,8 @@ class Config:
     submission_baseline_path: Path = field(init=False)
     submission_model_path: Path = field(init=False)
 
-    # --- logging (fields only; wiring added later) ---------------------
-    mlflow_tracking_uri: str = "http://127.0.0.1:5000"
-    experiment_name: str = "Filament_Segmentation"
-    mlflow_run_name: str = "m2f"
+    # --- logging (DagsHub via .env) -----------------------------------
+    dagshub: DagshubConfig = field(default_factory=DagshubConfig)
 
     def __post_init__(self) -> None:
         """Вычисляет производные пути из корня датасета и выходной папки: папки train/test, файл аннотаций, папку моделей и пути к сабмишн-файлам."""

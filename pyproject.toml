@@ -16,6 +16,9 @@ dependencies = [
     "safetensors>=0.8.0",
     "torchvision>=0.29.0",
     "scipy>=1.17.1",
+    "mlflow>=3.16.0",
+    "python-dotenv>=1.2.3",
+    "dagshub>=0.7.2",
 ]
 
 [dependency-groups]

@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import cv2
+import dagshub
+import matplotlib.pyplot as plt
+import mlflow
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -19,6 +22,7 @@ from src.data import (
     resolve_image,
     three_channel,
 )
+from src.metrics import aggregate, panoptic_quality
 
 CKPT = "facebook/mask2former-swin-tiny-coco-instance"
 DATA_SEED = 42
@@ -189,15 +193,73 @@ def predict_masks(
     return masks
 
 
-def train(
+def init_dagshub() -> bool:
+    """Инициализирует трекинг MLflow на DagsHub: ставит tracking URI и креды, создаёт эксперимент; при недоступности или отсутствии токена логирование отключается без ошибки.
+    returns:
+        True, если трекинг настроен, иначе False
+    """
+    dc = config.dagshub
+    if not dc.configured:
+        print("DagsHub logging disabled: set DAGSHUB_TOKEN in .env")
+        return False
+    try:
+        dagshub.init(repo_owner=dc.repo_owner, repo_name=dc.repo_name, mlflow=True)
+        mlflow.set_experiment(dc.experiment_name)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: DagsHub init failed, continuing without logging: {exc}")
+        return False
+
+
+def _val_items() -> list[tuple]:
+    """Формирует список валидационных изображений вместе с COCO-аннотациями и путями к файлам.
+    returns:
+        список кортежей (coco, info, path) валидационных изображений
+    """
+    coco = load_coco()
+    val = ensure_val_split(coco)
+    items = []
+    for info in coco.imgs.values():
+        if image_stem(info["file_name"]) not in val:
+            continue
+        path = resolve_image(config.train_images, info["file_name"])
+        if path is not None:
+            items.append((coco, info, path))
+    return items
+
+
+@torch.no_grad()
+def _eval_val(model, processor, device) -> float:
+    """Считает Home PQ модели на всех валидационных изображениях.
+    params:
+        model: обученная модель Mask2Former
+        processor: процессор Mask2Former
+        device: устройство выполнения вычислений
+    returns:
+        агрегированный PQ по валидации (0, если нет изображений)
+    """
+    rows = []
+    for coco, info, path in _val_items():
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+        gt = instances_for_image(coco, info["id"])
+        pred = predict_masks(model, processor, img, device)
+        rows.append(panoptic_quality(gt, pred))
+    if not rows:
+        return 0.0
+    return float(aggregate(rows)["pq"])
+
+
+def log_train(
     size: int = 512,
     epochs: int = 8,
     max_steps: int = 0,
     accum: int = 8,
     lr: float = 1e-4,
     workers: int = 0,
-) -> Path:
-    """Обучает Mask2Former на MAGFiLO: создаёт датасет и загрузчик, прогоняет цикл с накоплением градиента и mixed-precision, сохраняет чекпоинт и процессор после каждой эпохи.
+) -> dict:
+    """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub: параметры запуска, потерю и PQ валидации по эпохам, графики и модель.
     params:
         size: сторона кропа при обучении
         epochs: число эпох
@@ -206,7 +268,7 @@ def train(
         lr: скорость обучения
         workers: число воркеров DataLoader
     returns:
-        путь к сохранённому чекпоинту last.pt
+        словарь с историей train_loss и val_pq по эпохам
     """
     if not config.train_annotations.exists():
         raise SystemExit(
@@ -234,6 +296,25 @@ def train(
         autocast = lambda: torch.cuda.amp.autocast(enabled=device.type == "cuda")
     out = config.models_path
     out.mkdir(parents=True, exist_ok=True)
+    history: dict = {"train_loss": [], "val_pq": []}
+    run = None
+    if init_dagshub():
+        try:
+            run = mlflow.start_run(run_name=config.dagshub.mlflow_run_name)
+            mlflow.log_params(
+                {
+                    "checkpoint": CKPT,
+                    "size": size,
+                    "epochs": epochs,
+                    "accum": accum,
+                    "lr": lr,
+                    "weight_decay": 0.05,
+                    "workers": workers,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARNING: MLflow run init failed, continuing without logging: {exc}")
+            run = None
     step_i = 0
     for epoch in range(1, epochs + 1):
         running, seen, step = 0.0, 0, 0
@@ -263,8 +344,81 @@ def train(
             scaler.update()
         ckpt = out / "last.pt"
         torch.save({"model": model.state_dict(), "size": size, "epoch": epoch}, ckpt)
-        print(f"epoch {epoch} loss={running / max(seen, 1):.4f} -> {ckpt}")
+        avg_loss = running / max(seen, 1)
+        history["train_loss"].append(avg_loss)
+        if run is not None:
+            model.eval()
+            val_pq = _eval_val(model, processor, device)
+            model.train()
+            history["val_pq"].append(val_pq)
+            mlflow.log_metrics(
+                {"train_loss": avg_loss, "val_pq": val_pq}, step=epoch
+            )
+        else:
+            history["val_pq"].append(None)
+        print(f"epoch {epoch} loss={avg_loss:.4f} -> {ckpt}")
         if max_steps and step_i >= max_steps:
             break
     processor.save_pretrained(out / "processor")
-    return out / "last.pt"
+    if run is not None:
+        _log_training_artifacts(model, ckpt, history)
+        mlflow.end_run()
+    return history
+
+
+def _log_training_artifacts(model, ckpt: Path, history: dict) -> None:
+    """Сохраняет в активный MLflow-ран графики обучения, модель и чекпоинт; при сбое артефактов чекпоинт всё равно загружается.
+    params:
+        model: обученная модель Mask2Former
+        ckpt: путь к чекпоинту last.pt
+        history: словарь с историей train_loss и val_pq по эпохам
+    """
+    try:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        epochs = np.arange(1, len(history["train_loss"]) + 1)
+        ax.plot(epochs, history["train_loss"], label="train_loss", marker="o")
+        valid = [(e, v) for e, v in zip(epochs, history["val_pq"]) if v is not None]
+        if valid:
+            ax2 = ax.twinx()
+            ax2.plot(*zip(*valid), label="val_pq", marker="s", color="tab:orange")
+            ax2.set_ylabel("val_pq")
+        ax.set_xlabel("epoch")
+        ax.set_ylabel("train_loss")
+        fig.legend(loc="upper right")
+        fig.tight_layout()
+        mlflow.log_figure(fig, "training_curves.png")
+        plt.close(fig)
+        mlflow.pytorch.log_model(model, "mask2former_model", serialization_format="pickle")
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: MLflow artifacts failed, ckpt still logged: {exc}")
+    mlflow.log_artifact(str(ckpt))
+
+
+def train(
+    size: int = 512,
+    epochs: int = 8,
+    max_steps: int = 0,
+    accum: int = 8,
+    lr: float = 1e-4,
+    workers: int = 0,
+) -> Path:
+    """Обучает Mask2Former на MAGFiLO: выполняет обучение через log_train (с DagsHub-логированием, если оно настроено), сохраняет чекпоинт и процессор.
+    params:
+        size: сторона кропа при обучении
+        epochs: число эпох
+        max_steps: ограничение по числу шагов (0 — без ограничения)
+        accum: число шагов накопления градиента
+        lr: скорость обучения
+        workers: число воркеров DataLoader
+    returns:
+        путь к сохранённому чекпоинту last.pt
+    """
+    log_train(
+        size=size,
+        epochs=epochs,
+        max_steps=max_steps,
+        accum=accum,
+        lr=lr,
+        workers=workers,
+    )
+    return config.models_path / "last.pt"
