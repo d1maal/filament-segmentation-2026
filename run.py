@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""python run.py check | baseline | train | infer"""
+"""python run.py check | baseline | train | infer | sweep"""
 from __future__ import annotations
 
 import argparse
 import csv
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -30,12 +31,13 @@ from src.data import (
 from src.metrics import aggregate, panoptic_quality
 
 
-def _write_csv(path: Path, rows: list[dict]) -> None:
+def _write_csv(path: Path, rows: list[dict], fieldnames: list[str] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = fieldnames or ["filament_id", "segmentation_rle"]
     with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, ["filament_id", "segmentation_rle"])
-        w.writeheader()
-        w.writerows(rows)
+        writer = csv.DictWriter(f, fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
     print(f"Wrote {path} ({len(rows)} rows)")
 
 
@@ -50,7 +52,95 @@ def _val_items():
         if path is None:
             continue
         items.append((coco, info, path))
+    items.sort(key=lambda item: image_stem(item[1]["file_name"]))
     return items
+
+
+def _load_model(weights: Path | None):
+    import torch
+    from src.m2f import build
+
+    weights = weights or (OUTPUTS / "m2f" / "last.pt")
+    if not weights.exists():
+        raise SystemExit(f"No weights at {weights}. Run training first or pass --weights")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    try:
+        checkpoint = torch.load(weights, map_location=device, weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(weights, map_location=device)
+
+    processor, model = build(int(checkpoint.get("size", 512)))
+    model.load_state_dict(checkpoint["model"], strict=False)
+    model.to(device).eval()
+    return weights, checkpoint, processor, model, device
+
+
+def _draw_overlay(image: np.ndarray, gt: list[np.ndarray], pred: list[np.ndarray], metrics: dict) -> np.ndarray:
+    vis = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR).astype(np.float32)
+    gt_mask = np.zeros(image.shape[:2], dtype=bool)
+    pred_mask = np.zeros(image.shape[:2], dtype=bool)
+
+    for mask in gt:
+        gt_mask |= mask > 0
+    for mask in pred:
+        pred_mask |= mask > 0
+
+    only_gt = gt_mask & ~pred_mask
+    only_pred = pred_mask & ~gt_mask
+    overlap = gt_mask & pred_mask
+
+    vis[only_gt] = 0.45 * vis[only_gt] + 0.55 * np.array([0, 0, 255])
+    vis[only_pred] = 0.45 * vis[only_pred] + 0.55 * np.array([0, 255, 0])
+    vis[overlap] = 0.45 * vis[overlap] + 0.55 * np.array([0, 255, 255])
+    vis = np.clip(vis, 0, 255).astype(np.uint8)
+
+    text = (
+        f"PQ {metrics['pq']:.3f} | TP {metrics['tp']} | FP {metrics['fp']} | "
+        f"FN {metrics['fn']} | split {metrics['splits']} | merge {metrics['merges']}"
+    )
+    cv2.rectangle(vis, (0, 0), (min(vis.shape[1], 980), 36), (0, 0, 0), -1)
+    cv2.putText(vis, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+    return vis
+
+
+def _summary(rows: list[dict]) -> dict:
+    result = aggregate(rows)
+    tp = result.get("tp", 0)
+    fp = result.get("fp", 0)
+    fn = result.get("fn", 0)
+    iou_sum = sum(row["sq"] * row["tp"] for row in rows)
+    rq_denom = tp + 0.5 * fp + 0.5 * fn
+
+    result["sq"] = float(iou_sum / tp) if tp else 0.0
+    result["rq"] = float(tp / rq_denom) if rq_denom else 0.0
+    result["precision"] = float(tp / (tp + fp)) if tp + fp else 0.0
+    result["recall"] = float(tp / (tp + fn)) if tp + fn else 0.0
+    return result
+
+
+def _append_sweep(results: list[dict], weights: Path, images: int) -> None:
+    path = ROOT / "experiments.md"
+    lines = [
+        "",
+        f"## Threshold sweep — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "",
+        f"Weights: `{weights}`  ",
+        f"Validation images: {images}",
+        "",
+        "| score_thr | min_area | PQ | SQ | RQ | precision | recall | TP | FP | FN |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in results:
+        lines.append(
+            f"| {row['score_thr']:.2f} | {row['min_area']} | {row['pq']:.4f} | "
+            f"{row['sq']:.4f} | {row['rq']:.4f} | {row['precision']:.4f} | "
+            f"{row['recall']:.4f} | {row['tp']} | {row['fp']} | {row['fn']} |"
+        )
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"Updated {path}")
 
 
 def cmd_check() -> None:
@@ -111,44 +201,155 @@ def cmd_train(smoke: bool, size: int, epochs: int, max_steps: int, accum: int) -
     train(size=size, epochs=epochs, max_steps=max_steps, accum=accum)
 
 
-def cmd_infer(submit: bool, weights: Path | None) -> None:
-    import torch
-    from tqdm import tqdm
-    from src.m2f import build, predict_masks
+def _save_worst(rows, items, model, processor, device, score_thr: float, min_area: int, count: int) -> None:
+    from src.m2f import predict_masks
 
-    weights = weights or (OUTPUTS / "m2f" / "last.pt")
-    if not weights.exists():
-        raise SystemExit(f"No weights at {weights}. Run: python run.py train --smoke")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    try:
-        bundle = torch.load(weights, map_location=device, weights_only=False)
-    except TypeError:
-        bundle = torch.load(weights, map_location=device)
-    processor, model = build(int(bundle.get("size", 512)))
-    model.load_state_dict(bundle["model"], strict=False)
-    model.to(device).eval()
+    if count <= 0:
+        return
 
-    rows = []
-    items = _val_items()
-    print(f"infer val: {len(items)} images", flush=True)
-    for coco, info, path in tqdm(items, desc="infer"):
-        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    item_by_stem = {image_stem(info["file_name"]): (coco, info, path) for coco, info, path in items}
+    worst = sorted(rows, key=lambda row: (row["pq"], -row["fn"], -row["fp"]))[:count]
+    out_dir = OUTPUTS / "m2f" / "viz" / f"score_{score_thr:.2f}_area_{min_area}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for rank, row in enumerate(worst, start=1):
+        coco, info, path = item_by_stem[row["stem"]]
+        image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         gt = instances_for_image(coco, info["id"])
-        pred = predict_masks(model, processor, img, device)
+        pred = predict_masks(model, processor, image, device, score_thr=score_thr, min_area=min_area)
+        vis = _draw_overlay(image, gt, pred, row)
+        name = f"{rank:02d}_pq_{row['pq']:.3f}_{row['stem']}.jpg"
+        cv2.imwrite(str(out_dir / name), vis)
+
+    print(f"Saved {len(worst)} visualizations to {out_dir}")
+
+
+def cmd_infer(submit: bool, weights: Path | None, score_thr: float, min_area: int, viz_worst: int) -> None:
+    from tqdm import tqdm
+    from src.m2f import predict_masks
+
+    weights, checkpoint, processor, model, device = _load_model(weights)
+    items = _val_items()
+    rows = []
+
+    print(f"infer val: {len(items)} images | score={score_thr} | min_area={min_area}", flush=True)
+    for coco, info, path in tqdm(items, desc="infer"):
+        image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        gt = instances_for_image(coco, info["id"])
+        pred = predict_masks(model, processor, image, device, score_thr=score_thr, min_area=min_area)
         metrics = panoptic_quality(gt, pred)
         metrics["stem"] = image_stem(info["file_name"])
         rows.append(metrics)
-    summary = aggregate(rows)
-    OUTPUTS.mkdir(parents=True, exist_ok=True)
-    (OUTPUTS / "val_metrics_m2f.json").write_text(json.dumps({"summary": summary, "per_image": rows}, indent=2), encoding="utf-8")
+
+    summary = _summary(rows)
+    out_dir = OUTPUTS / "m2f"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "val_metrics_m2f.json").write_text(
+        json.dumps(
+            {
+                "config": {
+                    "weights": str(weights),
+                    "epoch": checkpoint.get("epoch"),
+                    "score_thr": score_thr,
+                    "min_area": min_area,
+                },
+                "summary": summary,
+                "per_image": rows,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     print("Home PQ (Mask2Former):", round(summary["pq"], 4), summary)
+
+    _save_worst(rows, items, model, processor, device, score_thr, min_area, viz_worst)
+
     if submit:
         csv_rows = []
         for path in sorted(p for p in TEST_IMAGES.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}):
-            pred = predict_masks(model, processor, cv2.imread(str(path), cv2.IMREAD_GRAYSCALE), device)
+            image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+            pred = predict_masks(model, processor, image, device, score_thr=score_thr, min_area=min_area)
             for i, mask in enumerate(pred, start=1):
                 csv_rows.append({"filament_id": f"{path.stem}_{i}", "segmentation_rle": mask_to_rle_counts(mask)})
-        _write_csv(OUTPUTS / "submission_m2f.csv", csv_rows)
+        _write_csv(out_dir / "submission_m2f.csv", csv_rows)
+
+
+def cmd_sweep(weights: Path | None, score_thrs: list[float], min_areas: list[int], limit: int, write_log: bool) -> None:
+    from tqdm import tqdm
+    from src.m2f import predict_masks_grid
+
+    weights, checkpoint, processor, model, device = _load_model(weights)
+    items = _val_items()
+    if limit > 0:
+        items = items[:limit]
+
+    settings = [(float(score), int(area)) for score in score_thrs for area in min_areas]
+    rows = {setting: [] for setting in settings}
+
+    print(f"sweep: {len(items)} images, {len(settings)} settings", flush=True)
+    for coco, info, path in tqdm(items, desc="sweep"):
+        image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        gt = instances_for_image(coco, info["id"])
+        predictions = predict_masks_grid(model, processor, image, device, score_thrs, min_areas)
+        stem = image_stem(info["file_name"])
+
+        for setting, pred in predictions.items():
+            metrics = panoptic_quality(gt, pred)
+            metrics["stem"] = stem
+            rows[setting].append(metrics)
+
+    results = []
+    for score_thr, min_area in settings:
+        summary = _summary(rows[(score_thr, min_area)])
+        results.append({"score_thr": score_thr, "min_area": min_area, **summary})
+    results.sort(key=lambda row: row["pq"], reverse=True)
+
+    out_dir = OUTPUTS / "m2f"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "threshold_sweep.json").write_text(
+        json.dumps(
+            {
+                "config": {
+                    "weights": str(weights),
+                    "epoch": checkpoint.get("epoch"),
+                    "images": len(items),
+                },
+                "results": results,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_csv(
+        out_dir / "threshold_sweep.csv",
+        results,
+        [
+            "score_thr",
+            "min_area",
+            "pq",
+            "sq",
+            "rq",
+            "precision",
+            "recall",
+            "tp",
+            "fp",
+            "fn",
+            "splits",
+            "merges",
+            "images",
+        ],
+    )
+
+    print("\nBest settings:")
+    for row in results[:10]:
+        print(
+            f"score={row['score_thr']:.2f} area={row['min_area']:4d} "
+            f"PQ={row['pq']:.4f} SQ={row['sq']:.4f} RQ={row['rq']:.4f} "
+            f"TP={row['tp']} FP={row['fp']} FN={row['fn']}"
+        )
+
+    if write_log:
+        _append_sweep(results, weights, len(items))
 
 
 def main() -> None:
@@ -167,6 +368,16 @@ def main() -> None:
     i = sub.add_parser("infer")
     i.add_argument("--submit", action="store_true")
     i.add_argument("--weights", type=Path, default=None)
+    i.add_argument("--score-thr", type=float, default=0.5)
+    i.add_argument("--min-area", type=int, default=80)
+    i.add_argument("--viz-worst", type=int, default=0)
+    s = sub.add_parser("sweep")
+    s.add_argument("--weights", type=Path, default=None)
+    s.add_argument("--score-thrs", type=float, nargs="+", default=[0.2, 0.3, 0.4, 0.5, 0.6])
+    s.add_argument("--min-areas", type=int, nargs="+", default=[0, 40, 80, 160])
+    s.add_argument("--limit", type=int, default=0)
+    s.add_argument("--no-log", action="store_true", help="Do not append results to experiments.md")
+
     args = p.parse_args()
     if args.cmd == "check":
         cmd_check()
@@ -174,8 +385,10 @@ def main() -> None:
         cmd_baseline(args.submit, args.viz)
     elif args.cmd == "train":
         cmd_train(args.smoke, args.size, args.epochs, args.max_steps, args.accum)
+    elif args.cmd == "infer":
+        cmd_infer(args.submit, args.weights, args.score_thr, args.min_area, args.viz_worst)
     else:
-        cmd_infer(args.submit, args.weights)
+        cmd_sweep(args.weights, args.score_thrs, args.min_areas, args.limit, not args.no_log)
 
 
 if __name__ == "__main__":

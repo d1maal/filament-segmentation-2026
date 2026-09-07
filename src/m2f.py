@@ -94,37 +94,74 @@ def collate(processor, batch: list[dict]) -> dict:
     return encoded
 
 
-@torch.no_grad()
-def predict_masks(model, processor, image: np.ndarray, device, score_thr: float = 0.5, min_area: int = 80) -> list[np.ndarray]:
-    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape[:2]
-    inputs = {k: v.to(device) for k, v in processor(images=three_channel(gray), return_tensors="pt").items()}
-    result = processor.post_process_instance_segmentation(
-        model(**inputs),
-        threshold=score_thr,
-        target_sizes=[(h, w)],
-        return_binary_maps=True,
-    )[0]
-    seg, infos = result.get("segmentation"), result.get("segments_info") or []
+def _masks_from_result(result: dict, score_thr: float, min_area: int) -> list[np.ndarray]:
+    seg = result.get("segmentation")
+    infos = result.get("segments_info") or []
     if seg is None:
         return []
+
     masks = []
     if torch.is_tensor(seg) and seg.ndim == 3:
         for i, info in enumerate(infos):
             if float(info.get("score", 0)) < score_thr:
                 continue
-            binary = (seg[i] > 0).cpu().numpy().astype(np.uint8)
-            if int(binary.sum()) >= min_area:
-                masks.append(binary)
+            mask = (seg[i] > 0).cpu().numpy().astype(np.uint8)
+            if int(mask.sum()) >= min_area:
+                masks.append(mask)
         return masks
+
     id_map = seg.cpu().numpy() if torch.is_tensor(seg) else np.asarray(seg)
     for info in infos:
         if float(info.get("score", 0)) < score_thr:
             continue
-        binary = (id_map == int(info["id"])).astype(np.uint8)
-        if int(binary.sum()) >= min_area:
-            masks.append(binary)
+        mask = (id_map == int(info["id"])).astype(np.uint8)
+        if int(mask.sum()) >= min_area:
+            masks.append(mask)
     return masks
+
+
+def _postprocess(processor, outputs, size: tuple[int, int], score_thr: float, min_area: int) -> list[np.ndarray]:
+    result = processor.post_process_instance_segmentation(
+        outputs,
+        threshold=score_thr,
+        target_sizes=[size],
+        return_binary_maps=True,
+    )[0]
+    return _masks_from_result(result, score_thr, min_area)
+
+
+@torch.no_grad()
+def predict_masks(model, processor, image: np.ndarray, device, score_thr: float = 0.5, min_area: int = 80) -> list[np.ndarray]:
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+    inputs = {k: v.to(device) for k, v in processor(images=three_channel(gray), return_tensors="pt").items()}
+    outputs = model(**inputs)
+    return _postprocess(processor, outputs, (h, w), score_thr, min_area)
+
+
+@torch.no_grad()
+def predict_masks_grid(
+    model,
+    processor,
+    image: np.ndarray,
+    device,
+    score_thrs: list[float],
+    min_areas: list[int],
+) -> dict[tuple[float, int], list[np.ndarray]]:
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+    inputs = {k: v.to(device) for k, v in processor(images=three_channel(gray), return_tensors="pt").items()}
+    outputs = model(**inputs)
+
+    predictions = {}
+    for score_thr in score_thrs:
+        masks = _postprocess(processor, outputs, (h, w), float(score_thr), 0)
+        areas = [int(mask.sum()) for mask in masks]
+        for min_area in min_areas:
+            predictions[(float(score_thr), int(min_area))] = [
+                mask for mask, area in zip(masks, areas) if area >= int(min_area)
+            ]
+    return predictions
 
 
 def train(size: int = 512, epochs: int = 8, max_steps: int = 0, accum: int = 8, lr: float = 1e-4, workers: int = 0) -> Path:
