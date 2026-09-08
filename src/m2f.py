@@ -243,9 +243,9 @@ def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
     """
     items = _val_items()
     if eval_samples and len(items) > eval_samples:
-        items = random.sample(items, eval_samples)
+        items = random.Random(DATA_SEED).sample(items, eval_samples)
     rows = []
-    for coco, info, path in items:
+    for coco, info, path in tqdm(items, desc="eval val PQ"):
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
@@ -278,9 +278,9 @@ def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
         if path is not None:
             items.append((coco, info, path))
     if eval_samples and len(items) > eval_samples:
-        items = random.sample(items, eval_samples)
+        items = random.Random(DATA_SEED).sample(items, eval_samples)
     rows = []
-    for coco, info, path in items:
+    for coco, info, path in tqdm(items, desc="eval train PQ"):
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
