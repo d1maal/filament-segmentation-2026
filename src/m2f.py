@@ -299,7 +299,8 @@ def log_train(
     accum: int = 8,
     lr: float = 1e-4,
     workers: int = 0,
-    eval_samples: int = 0,
+    eval_val_samples: int = 0,
+    eval_train_samples: int = 0,
     run_name: str = "m2f",
 ) -> dict:
     """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub.
@@ -310,7 +311,8 @@ def log_train(
         accum: число шагов накопления градиента
         lr: скорость обучения
         workers: число воркеров DataLoader
-        eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
+        eval_val_samples: число случайных изображений для val PQ (0 — вся валидация)
+        eval_train_samples: число случайных изображений для train PQ (0 — не считать)
         run_name: имя MLflow run на DagsHub
     returns:
         словарь с историей train_loss, train_pq и val_pq по эпохам
@@ -398,20 +400,19 @@ def log_train(
         avg_loss = running / max(seen, 1)
         history["train_loss"].append(avg_loss)
         model.eval()
-        val_pq = _eval_val(model, processor, device, eval_samples)
-        train_pq = _eval_train(model, processor, device, eval_samples)
+        val_pq = _eval_val(model, processor, device, eval_val_samples)
+        if eval_train_samples:
+            train_pq = _eval_train(model, processor, device, eval_train_samples)
+        else:
+            train_pq = None
         model.train()
         history["val_pq"].append(val_pq)
         history["train_pq"].append(train_pq)
         if run is not None:
-            mlflow.log_metrics(
-                {
-                    "train_loss": avg_loss,
-                    "val_pq": val_pq,
-                    "train_pq": train_pq,
-                },
-                step=epoch,
-            )
+            metrics = {"train_loss": avg_loss, "val_pq": val_pq}
+            if train_pq is not None:
+                metrics["train_pq"] = train_pq
+            mlflow.log_metrics(metrics, step=epoch)
         epoch_ckpt = weights_dir / f"epoch_{epoch}.pt"
         torch.save({"model": model.state_dict(), "size": size, "epoch": epoch}, epoch_ckpt)
         metrics_rows.append(
@@ -485,7 +486,8 @@ def train(
     accum: int = 8,
     lr: float = 1e-4,
     workers: int = 0,
-    eval_samples: int = 0,
+    eval_val_samples: int = 0,
+    eval_train_samples: int = 0,
     run_name: str = "m2f",
 ) -> Path:
     """Обучает Mask2Former на MAGFiLO: выполняет обучение через log_train (с DagsHub-логированием, если оно настроено), сохраняет чекпоинт и процессор.
@@ -496,7 +498,8 @@ def train(
         accum: число шагов накопления градиента
         lr: скорость обучения
         workers: число воркеров DataLoader
-        eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
+        eval_val_samples: число случайных изображений для val PQ (0 — вся валидация)
+        eval_train_samples: число случайных изображений для train PQ (0 — не считать)
         run_name: имя MLflow run на DagsHub
     returns:
         путь к сохранённому чекпоинту last.pt
@@ -508,7 +511,8 @@ def train(
         accum=accum,
         lr=lr,
         workers=workers,
-        eval_samples=eval_samples,
+        eval_val_samples=eval_val_samples,
+        eval_train_samples=eval_train_samples,
         run_name=run_name,
     )
     return config.models_path / "last.pt"
