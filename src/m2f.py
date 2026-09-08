@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import cv2
@@ -229,17 +230,21 @@ def _val_items() -> list[tuple]:
 
 
 @torch.no_grad()
-def _eval_val(model, processor, device) -> float:
-    """Считает Home PQ модели на всех валидационных изображениях.
+def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
+    """Считает Home PQ модели на валидационных изображениях (по умолчанию на всех; при eval_samples > 0 — на случайной подвыборке заданного размера).
     params:
         model: обученная модель Mask2Former
         processor: процессор Mask2Former
         device: устройство выполнения вычислений
+        eval_samples: число случайных изображений для оценки (0 — все)
     returns:
         агрегированный PQ по валидации (0, если нет изображений)
     """
+    items = _val_items()
+    if eval_samples > 0:
+        items = random.sample(items, eval_samples)
     rows = []
-    for coco, info, path in _val_items():
+    for coco, info, path in items:
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
@@ -252,24 +257,29 @@ def _eval_val(model, processor, device) -> float:
 
 
 @torch.no_grad()
-def _eval_train(model, processor, device) -> float:
-    """Считает Home PQ модели на всех тренировочных изображениях (исключая валидационный сплит).
+def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
+    """Считает Home PQ модели на тренировочных изображениях (исключая валидационный сплит); по умолчанию на всех, при eval_samples > 0 — на случайной подвыборке заданного размера.
     params:
         model: обученная модель Mask2Former
         processor: процессор Mask2Former
         device: устройство выполнения вычислений
+        eval_samples: число случайных изображений для оценки (0 — все)
     returns:
         агрегированный PQ по трейну (0, если нет изображений)
     """
     coco = load_coco()
     val = ensure_val_split(coco)
-    rows = []
+    items = []
     for info in coco.imgs.values():
         if image_stem(info["file_name"]) in val:
             continue
         path = resolve_image(config.train_images, info["file_name"])
-        if path is None:
-            continue
+        if path is not None:
+            items.append((coco, info, path))
+    if eval_samples > 0:
+        items = random.sample(items, eval_samples)
+    rows = []
+    for coco, info, path in items:
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
@@ -288,6 +298,7 @@ def log_train(
     accum: int = 8,
     lr: float = 1e-4,
     workers: int = 0,
+    eval_samples: int = 0,
 ) -> dict:
     """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub.
     params:
@@ -297,8 +308,9 @@ def log_train(
         accum: число шагов накопления градиента
         lr: скорость обучения
         workers: число воркеров DataLoader
+        eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
     returns:
-        словарь с историей train_loss и val_pq по эпохам
+        словарь с историей train_loss, train_pq и val_pq по эпохам
     """
     if not config.train_annotations.exists():
         raise SystemExit(
@@ -378,8 +390,8 @@ def log_train(
         history["train_loss"].append(avg_loss)
         if run is not None:
             model.eval()
-            val_pq = _eval_val(model, processor, device)
-            train_pq = _eval_train(model, processor, device)
+            val_pq = _eval_val(model, processor, device, eval_samples)
+            train_pq = _eval_train(model, processor, device, eval_samples)
             model.train()
             history["val_pq"].append(val_pq)
             history["train_pq"].append(train_pq)
@@ -447,6 +459,7 @@ def train(
     accum: int = 8,
     lr: float = 1e-4,
     workers: int = 0,
+    eval_samples: int = 0,
 ) -> Path:
     """Обучает Mask2Former на MAGFiLO: выполняет обучение через log_train (с DagsHub-логированием, если оно настроено), сохраняет чекпоинт и процессор.
     params:
@@ -456,6 +469,7 @@ def train(
         accum: число шагов накопления градиента
         lr: скорость обучения
         workers: число воркеров DataLoader
+        eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
     returns:
         путь к сохранённому чекпоинту last.pt
     """
@@ -466,5 +480,6 @@ def train(
         accum=accum,
         lr=lr,
         workers=workers,
+        eval_samples=eval_samples,
     )
     return config.models_path / "last.pt"

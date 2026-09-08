@@ -140,6 +140,7 @@ def cmd_train(
     epochs: int,
     max_steps: int,
     accum: int,
+    eval_samples: int,
 ) -> None:
     """Запускает обучение Mask2Former с заданными параметрами; в smoke-режиме ограничивает обучение одной эпохой и тридцатью шагами.
     params:
@@ -148,12 +149,19 @@ def cmd_train(
         epochs: число эпох
         max_steps: ограничение по числу шагов
         accum: число шагов накопления градиента
+        eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
     """
     from src.m2f import train
 
     if smoke:
         epochs, max_steps = 1, max_steps or 30
-    train(size=size, epochs=epochs, max_steps=max_steps, accum=accum)
+    train(
+        size=size,
+        epochs=epochs,
+        max_steps=max_steps,
+        accum=accum,
+        eval_samples=eval_samples,
+    )
 
 
 def cmd_infer(submit: bool, weights: Path | None) -> None:
@@ -236,6 +244,11 @@ def main() -> None:
     t.add_argument("--epochs", type=int, default=8)
     t.add_argument("--max-steps", type=int, default=0)
     t.add_argument("--accum", type=int, default=8, help="Gradient accumulation steps")
+    t.add_argument(
+        "--eval-samples",
+        type=int,
+        default=0,        
+    )
     i = sub.add_parser("infer")
     i.add_argument("--submit", action="store_true")
     i.add_argument("--weights", type=Path, default=None)
@@ -251,6 +264,7 @@ def main() -> None:
             args.epochs,
             args.max_steps,
             args.accum,
+            args.eval_samples,
         )
     elif args.cmd == "infer":
         cmd_infer(args.submit, args.weights)
