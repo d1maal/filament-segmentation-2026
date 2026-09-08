@@ -79,7 +79,7 @@ class Magfilo(Dataset):
         return len(self.rows)
 
     def __getitem__(self, idx: int) -> dict:
-        """Возвращает одно изображение и его маски: читает файл, преобразует в три канала и режет случайный кроп с достаточным числом масок.
+        """Возвращает одно изображение и его маски.
         params:
             idx: индекс элемента
         returns:
@@ -148,7 +148,7 @@ def predict_masks(
     score_thr: float = 0.5,
     min_area: int = 80,
 ) -> list[np.ndarray]:
-    """Делает инференс модели на одном изображении: преобразует вход, прогоняет сеть и возвращает бинарные маски инстансов с фильтрами по порогу и площади.
+    """Делает инференс модели на одном изображении.
     params:
         model: обученная модель Mask2Former
         processor: процессор Mask2Former
@@ -194,7 +194,7 @@ def predict_masks(
 
 
 def init_dagshub() -> bool:
-    """Инициализирует трекинг MLflow на DagsHub: ставит tracking URI и креды, создаёт эксперимент; при недоступности или отсутствии токена логирование отключается без ошибки.
+    """Инициализирует трекинг MLflow на DagsHub.
     returns:
         True, если трекинг настроен, иначе False
     """
@@ -206,7 +206,7 @@ def init_dagshub() -> bool:
         dagshub.init(repo_owner=dc.repo_owner, repo_name=dc.repo_name, mlflow=True)
         mlflow.set_experiment(dc.experiment_name)
         return True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"WARNING: DagsHub init failed, continuing without logging: {exc}")
         return False
 
@@ -259,7 +259,7 @@ def log_train(
     lr: float = 1e-4,
     workers: int = 0,
 ) -> dict:
-    """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub: параметры запуска, потерю и PQ валидации по эпохам, графики и модель.
+    """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub.
     params:
         size: сторона кропа при обучении
         epochs: число эпох
@@ -312,7 +312,7 @@ def log_train(
                     "workers": workers,
                 }
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"WARNING: MLflow run init failed, continuing without logging: {exc}")
             run = None
     step_i = 0
@@ -367,7 +367,7 @@ def log_train(
 
 
 def _log_training_artifacts(model, ckpt: Path, history: dict) -> None:
-    """Сохраняет в активный MLflow-ран графики обучения, модель и чекпоинт; при сбое артефактов чекпоинт всё равно загружается.
+    """Сохраняет в активный MLflow-ран графики обучения, модель и чекпоинт.
     params:
         model: обученная модель Mask2Former
         ckpt: путь к чекпоинту last.pt
@@ -389,7 +389,7 @@ def _log_training_artifacts(model, ckpt: Path, history: dict) -> None:
         mlflow.log_figure(fig, "training_curves.png")
         plt.close(fig)
         mlflow.pytorch.log_model(model, "mask2former_model", serialization_format="pickle")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"WARNING: MLflow artifacts failed, ckpt still logged: {exc}")
     mlflow.log_artifact(str(ckpt))
 

@@ -11,7 +11,7 @@ load_dotenv(ROOT / ".env")
 
 
 def _discover_dataset_root() -> Path:
-    """Определяет корень датасета MAGFiLO, перебирая источники: переменную окружения, локальную папку data/ и пути Kaggle-ввода; возвращает первый, где существует train/train_images.
+    """Определяет корень датасета MAGFiLO.
     returns:
         путь к корню датасета
     """
@@ -36,7 +36,7 @@ def _discover_dataset_root() -> Path:
 
 
 def _discover_outputs_path() -> Path:
-    """Определяет папку для выходных артефактов: на Kaggle — working/outputs, иначе — outputs внутри проекта.
+    """Определяет папку для выходных артефактов.
     returns:
         путь к папке выходных артефактов
     """
@@ -76,11 +76,10 @@ class Config:
     submission_baseline_path: Path = field(init=False)
     submission_model_path: Path = field(init=False)
 
-    # --- logging (DagsHub via .env) -----------------------------------
     dagshub: DagshubConfig = field(default_factory=DagshubConfig)
 
     def __post_init__(self) -> None:
-        """Вычисляет производные пути из корня датасета и выходной папки: папки train/test, файл аннотаций, папку моделей и пути к сабмишн-файлам."""
+        """Вычисляет производные пути из корня датасета и выходной папки."""
         train = self.dataset_path / "train"
         anns = sorted(train.glob("*Annotations*.json"))
         annotations = (
