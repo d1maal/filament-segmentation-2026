@@ -232,7 +232,7 @@ def _val_items() -> list[tuple]:
 
 @torch.no_grad()
 def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
-    """Считает Home PQ модели на валидационных изображениях (по умолчанию на всех; при eval_samples > 0 — на случайной подвыборке заданного размера).
+    """Считает Home PQ модели на валидационных изображениях.
     params:
         model: обученная модель Mask2Former
         processor: процессор Mask2Former
@@ -259,7 +259,7 @@ def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
 
 @torch.no_grad()
 def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
-    """Считает Home PQ модели на тренировочных изображениях (исключая валидационный сплит); по умолчанию на всех, при eval_samples > 0 — на случайной подвыборке заданного размера.
+    """Считает Home PQ модели на тренировочных изображениях.
     params:
         model: обученная модель Mask2Former
         processor: процессор Mask2Former
