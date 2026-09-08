@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import random
 from pathlib import Path
 
@@ -340,6 +341,12 @@ def log_train(
         autocast = lambda: torch.cuda.amp.autocast(enabled=device.type == "cuda")
     out = config.models_path
     out.mkdir(parents=True, exist_ok=True)
+    run_dir = out / "experiments" / run_name
+    weights_dir = run_dir / "weights"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    metrics_rows: list[dict] = []
+    best_pq = -1.0
     history: dict = {"train_loss": [], "val_pq": [], "train_pq": []}
     run = None
     if init_dagshub():
@@ -390,13 +397,13 @@ def log_train(
         torch.save({"model": model.state_dict(), "size": size, "epoch": epoch}, ckpt)
         avg_loss = running / max(seen, 1)
         history["train_loss"].append(avg_loss)
+        model.eval()
+        val_pq = _eval_val(model, processor, device, eval_samples)
+        train_pq = _eval_train(model, processor, device, eval_samples)
+        model.train()
+        history["val_pq"].append(val_pq)
+        history["train_pq"].append(train_pq)
         if run is not None:
-            model.eval()
-            val_pq = _eval_val(model, processor, device, eval_samples)
-            train_pq = _eval_train(model, processor, device, eval_samples)
-            model.train()
-            history["val_pq"].append(val_pq)
-            history["train_pq"].append(train_pq)
             mlflow.log_metrics(
                 {
                     "train_loss": avg_loss,
@@ -405,12 +412,29 @@ def log_train(
                 },
                 step=epoch,
             )
-        else:
-            history["val_pq"].append(None)
-            history["train_pq"].append(None)
+        epoch_ckpt = weights_dir / f"epoch_{epoch}.pt"
+        torch.save({"model": model.state_dict(), "size": size, "epoch": epoch}, epoch_ckpt)
+        metrics_rows.append(
+            {
+                "epoch": epoch,
+                "train_loss": avg_loss,
+                "train_pq": train_pq,
+                "val_pq": val_pq,
+            }
+        )
+        if val_pq > best_pq:
+            best_pq = val_pq
+            torch.save(
+                {"model": model.state_dict(), "size": size, "epoch": epoch},
+                run_dir / "best.pt",
+            )
         print(f"epoch {epoch} loss={avg_loss:.4f} -> {ckpt}")
         if max_steps and step_i >= max_steps:
             break
+    with (run_dir / "metrics.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["epoch", "train_loss", "train_pq", "val_pq"])
+        w.writeheader()
+        w.writerows(metrics_rows)
     processor.save_pretrained(out / "processor")
     if run is not None:
         _log_training_artifacts(model, ckpt, history)
