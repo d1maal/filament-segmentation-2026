@@ -241,7 +241,7 @@ def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
         агрегированный PQ по валидации (0, если нет изображений)
     """
     items = _val_items()
-    if eval_samples > 0:
+    if eval_samples and len(items) > eval_samples:
         items = random.sample(items, eval_samples)
     rows = []
     for coco, info, path in items:
@@ -276,7 +276,7 @@ def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
         path = resolve_image(config.train_images, info["file_name"])
         if path is not None:
             items.append((coco, info, path))
-    if eval_samples > 0:
+    if eval_samples and len(items) > eval_samples:
         items = random.sample(items, eval_samples)
     rows = []
     for coco, info, path in items:
