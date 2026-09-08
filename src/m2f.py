@@ -30,6 +30,7 @@ CKPT = "facebook/mask2former-swin-tiny-coco-instance"
 DATA_SEED = 42
 CROP_ATTEMPTS = 8
 DATASET_MIN_AREA = 32
+BEST_WORST_TOP_K = 10
 
 
 def build(size: int = 512):
@@ -292,6 +293,41 @@ def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
     return float(aggregate(rows)["pq"])
 
 
+def _save_best_worst(model, processor, device, run_dir: Path) -> None:
+    """Прогоняет модель по всей валидации и сохраняет top-k худших/лучших снимков с overlay GT/pred.
+    params:
+        model: модель с весами best.pt
+        processor: процессор Mask2Former
+        device: устройство выполнения вычислений
+        run_dir: папка эксперимента (outputs/m2f/experiments/<run_name>)
+    """
+    results = []
+    for coco, info, path in tqdm(_val_items(), desc="best/worst val"):
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+        pred = predict_masks(model, processor, img, device)
+        pq = panoptic_quality(instances_for_image(coco, info["id"]), pred)["pq"]
+        results.append((pq, info, path))
+    results.sort(key=lambda r: r[0])
+    for name, seq in (
+        ("bad", results[:BEST_WORST_TOP_K]),
+        ("good", results[-BEST_WORST_TOP_K:]),
+    ):
+        folder = run_dir / name
+        folder.mkdir(parents=True, exist_ok=True)
+        for pq, info, path in seq:
+            gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+            vis = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            for m in instances_for_image(coco, info["id"]):
+                cnt, _ = cv2.findContours(m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(vis, cnt, -1, (0, 0, 255), 2)
+            for m in predict_masks(model, processor, gray, device):
+                cnt, _ = cv2.findContours(m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(vis, cnt, -1, (0, 255, 0), 2)
+            cv2.imwrite(str(folder / f"pq{pq:.3f}_{path.stem}.png"), vis)
+
+
 def log_train(
     size: int = 512,
     epochs: int = 8,
@@ -437,6 +473,11 @@ def log_train(
         w.writeheader()
         w.writerows(metrics_rows)
     processor.save_pretrained(out / "processor")
+    best_ckpt = run_dir / "best.pt"
+    if best_ckpt.exists():
+        model.load_state_dict(torch.load(best_ckpt, map_location=device, weights_only=False)["model"])
+        model.eval()
+        _save_best_worst(model, processor, device, run_dir)
     if run is not None:
         _log_training_artifacts(model, ckpt, history)
         mlflow.end_run()

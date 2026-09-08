@@ -140,7 +140,8 @@ def cmd_train(
     epochs: int,
     max_steps: int,
     accum: int,
-    eval_samples: int,
+    eval_val_samples: int,
+    eval_train_samples: int,
     run_name: str = "m2f",
 ) -> None:
     """Запускает обучение Mask2Former с заданными параметрами; в smoke-режиме ограничивает обучение одной эпохой и тридцатью шагами.
@@ -150,7 +151,8 @@ def cmd_train(
         epochs: число эпох
         max_steps: ограничение по числу шагов
         accum: число шагов накопления градиента
-        eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
+        eval_val_samples: число случайных изображений для val PQ (0 — вся валидация)
+        eval_train_samples: число случайных изображений для train PQ (0 — не считать)
         run_name: имя MLflow run на DagsHub (по умолчанию 'm2f')
     """
     from src.m2f import train
@@ -162,7 +164,8 @@ def cmd_train(
         epochs=epochs,
         max_steps=max_steps,
         accum=accum,
-        eval_samples=eval_samples,
+        eval_val_samples=eval_val_samples,
+        eval_train_samples=eval_train_samples,
         run_name=run_name,
     )
 
@@ -248,9 +251,16 @@ def main() -> None:
     t.add_argument("--max-steps", type=int, default=0)
     t.add_argument("--accum", type=int, default=8, help="Gradient accumulation steps")
     t.add_argument(
-        "--eval-samples",
+        "--eval-samples-val",
         type=int,
-        default=0,        
+        default=0,
+        help="Random val images for PQ (0 = all)",
+    )
+    t.add_argument(
+        "--eval-samples-train",
+        type=int,
+        default=0,
+        help="Random train images for PQ (0 = skip train metrics)",
     )
     t.add_argument(
         "--run-name",
@@ -272,7 +282,8 @@ def main() -> None:
             args.epochs,
             args.max_steps,
             args.accum,
-            args.eval_samples,
+            args.eval_samples_val,
+            args.eval_samples_train,
             args.run_name,
         )
     elif args.cmd == "infer":
