@@ -251,6 +251,36 @@ def _eval_val(model, processor, device) -> float:
     return float(aggregate(rows)["pq"])
 
 
+@torch.no_grad()
+def _eval_train(model, processor, device) -> float:
+    """Считает Home PQ модели на всех тренировочных изображениях (исключая валидационный сплит).
+    params:
+        model: обученная модель Mask2Former
+        processor: процессор Mask2Former
+        device: устройство выполнения вычислений
+    returns:
+        агрегированный PQ по трейну (0, если нет изображений)
+    """
+    coco = load_coco()
+    val = ensure_val_split(coco)
+    rows = []
+    for info in coco.imgs.values():
+        if image_stem(info["file_name"]) in val:
+            continue
+        path = resolve_image(config.train_images, info["file_name"])
+        if path is None:
+            continue
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+        gt = instances_for_image(coco, info["id"])
+        pred = predict_masks(model, processor, img, device)
+        rows.append(panoptic_quality(gt, pred))
+    if not rows:
+        return 0.0
+    return float(aggregate(rows)["pq"])
+
+
 def log_train(
     size: int = 512,
     epochs: int = 8,
@@ -296,7 +326,7 @@ def log_train(
         autocast = lambda: torch.cuda.amp.autocast(enabled=device.type == "cuda")
     out = config.models_path
     out.mkdir(parents=True, exist_ok=True)
-    history: dict = {"train_loss": [], "val_pq": []}
+    history: dict = {"train_loss": [], "val_pq": [], "train_pq": []}
     run = None
     if init_dagshub():
         try:
@@ -349,13 +379,21 @@ def log_train(
         if run is not None:
             model.eval()
             val_pq = _eval_val(model, processor, device)
+            train_pq = _eval_train(model, processor, device)
             model.train()
             history["val_pq"].append(val_pq)
+            history["train_pq"].append(train_pq)
             mlflow.log_metrics(
-                {"train_loss": avg_loss, "val_pq": val_pq}, step=epoch
+                {
+                    "train_loss": avg_loss,
+                    "val_pq": val_pq,
+                    "train_pq": train_pq,
+                },
+                step=epoch,
             )
         else:
             history["val_pq"].append(None)
+            history["train_pq"].append(None)
         print(f"epoch {epoch} loss={avg_loss:.4f} -> {ckpt}")
         if max_steps and step_i >= max_steps:
             break
@@ -371,17 +409,25 @@ def _log_training_artifacts(model, ckpt: Path, history: dict) -> None:
     params:
         model: обученная модель Mask2Former
         ckpt: путь к чекпоинту last.pt
-        history: словарь с историей train_loss и val_pq по эпохам
+        history: словарь с историей train_loss, val_pq и train_pq по эпохам
     """
     try:
         fig, ax = plt.subplots(figsize=(8, 5))
         epochs = np.arange(1, len(history["train_loss"]) + 1)
         ax.plot(epochs, history["train_loss"], label="train_loss", marker="o")
-        valid = [(e, v) for e, v in zip(epochs, history["val_pq"]) if v is not None]
-        if valid:
+        valid_val = [
+            (e, v) for e, v in zip(epochs, history["val_pq"]) if v is not None
+        ]
+        valid_train = [
+            (e, v) for e, v in zip(epochs, history["train_pq"]) if v is not None
+        ]
+        if valid_val or valid_train:
             ax2 = ax.twinx()
-            ax2.plot(*zip(*valid), label="val_pq", marker="s", color="tab:orange")
-            ax2.set_ylabel("val_pq")
+            if valid_val:
+                ax2.plot(*zip(*valid_val), label="val_pq", marker="s", color="tab:orange")
+            if valid_train:
+                ax2.plot(*zip(*valid_train), label="train_pq", marker="^", color="tab:green")
+            ax2.set_ylabel("pq")
         ax.set_xlabel("epoch")
         ax.set_ylabel("train_loss")
         fig.legend(loc="upper right")
