@@ -141,6 +141,7 @@ def cmd_train(
     max_steps: int,
     accum: int,
     eval_samples: int,
+    run_name: str = "m2f",
 ) -> None:
     """Запускает обучение Mask2Former с заданными параметрами; в smoke-режиме ограничивает обучение одной эпохой и тридцатью шагами.
     params:
@@ -150,6 +151,7 @@ def cmd_train(
         max_steps: ограничение по числу шагов
         accum: число шагов накопления градиента
         eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
+        run_name: имя MLflow run на DagsHub (по умолчанию 'm2f')
     """
     from src.m2f import train
 
@@ -161,6 +163,7 @@ def cmd_train(
         max_steps=max_steps,
         accum=accum,
         eval_samples=eval_samples,
+        run_name=run_name,
     )
 
 
@@ -249,6 +252,11 @@ def main() -> None:
         type=int,
         default=0,        
     )
+    t.add_argument(
+        "--run-name",
+        type=str,
+        default="m2f"        
+    )
     i = sub.add_parser("infer")
     i.add_argument("--submit", action="store_true")
     i.add_argument("--weights", type=Path, default=None)
@@ -265,6 +273,7 @@ def main() -> None:
             args.max_steps,
             args.accum,
             args.eval_samples,
+            args.run_name,
         )
     elif args.cmd == "infer":
         cmd_infer(args.submit, args.weights)

@@ -53,7 +53,6 @@ class DagshubConfig:
     repo_name: str = os.environ.get("DAGSHUB_REPO_NAME", "solar-filament-segmentation")
     experiment_name: str = os.environ.get("DAGSHUB_EXPERIMENT_NAME", "Test_Experiment_1")
     token: str = os.environ.get("DAGSHUB_TOKEN", "")
-    mlflow_run_name: str = "m2f"
 
     @property
     def configured(self) -> bool:

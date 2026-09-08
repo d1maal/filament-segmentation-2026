@@ -299,6 +299,7 @@ def log_train(
     lr: float = 1e-4,
     workers: int = 0,
     eval_samples: int = 0,
+    run_name: str = "m2f",
 ) -> dict:
     """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub.
     params:
@@ -309,6 +310,7 @@ def log_train(
         lr: скорость обучения
         workers: число воркеров DataLoader
         eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
+        run_name: имя MLflow run на DagsHub
     returns:
         словарь с историей train_loss, train_pq и val_pq по эпохам
     """
@@ -342,7 +344,7 @@ def log_train(
     run = None
     if init_dagshub():
         try:
-            run = mlflow.start_run(run_name=config.dagshub.mlflow_run_name)
+            run = mlflow.start_run(run_name=run_name)
             mlflow.log_params(
                 {
                     "checkpoint": CKPT,
@@ -446,7 +448,7 @@ def _log_training_artifacts(model, ckpt: Path, history: dict) -> None:
         fig.tight_layout()
         mlflow.log_figure(fig, "training_curves.png")
         plt.close(fig)
-        mlflow.pytorch.log_model(model, "mask2former_model", serialization_format="pickle")
+        mlflow.pytorch.log_model(model, "mask2former_model", serialization_format="pt2")
     except Exception as exc:
         print(f"WARNING: MLflow artifacts failed, ckpt still logged: {exc}")
     mlflow.log_artifact(str(ckpt))
@@ -460,6 +462,7 @@ def train(
     lr: float = 1e-4,
     workers: int = 0,
     eval_samples: int = 0,
+    run_name: str = "m2f",
 ) -> Path:
     """Обучает Mask2Former на MAGFiLO: выполняет обучение через log_train (с DagsHub-логированием, если оно настроено), сохраняет чекпоинт и процессор.
     params:
@@ -470,6 +473,7 @@ def train(
         lr: скорость обучения
         workers: число воркеров DataLoader
         eval_samples: число случайных изображений на каждую оценку PQ (0 — все)
+        run_name: имя MLflow run на DagsHub
     returns:
         путь к сохранённому чекпоинту last.pt
     """
@@ -481,5 +485,6 @@ def train(
         lr=lr,
         workers=workers,
         eval_samples=eval_samples,
+        run_name=run_name,
     )
     return config.models_path / "last.pt"
