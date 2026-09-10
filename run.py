@@ -143,6 +143,7 @@ def cmd_train(
     eval_val_samples: int,
     eval_train_samples: int,
     run_name: str = "m2f",
+    augment: bool = False,
 ) -> None:
     """Запускает обучение Mask2Former с заданными параметрами; в smoke-режиме ограничивает обучение одной эпохой и тридцатью шагами.
     params:
@@ -154,6 +155,7 @@ def cmd_train(
         eval_val_samples: число случайных изображений для val PQ (0 — вся валидация)
         eval_train_samples: число случайных изображений для train PQ (0 — не считать)
         run_name: имя MLflow run на DagsHub (по умолчанию 'm2f')
+        augment: использовать аугментации (flip/повороты) при обучении
     """
     from src.m2f import train
 
@@ -167,6 +169,7 @@ def cmd_train(
         eval_val_samples=eval_val_samples,
         eval_train_samples=eval_train_samples,
         run_name=run_name,
+        augment=augment,
     )
 
 
@@ -253,19 +256,21 @@ def main() -> None:
     t.add_argument(
         "--eval-samples-val",
         type=int,
-        default=0,
-        help="Random val images for PQ (0 = all)",
+        default=0,        
     )
     t.add_argument(
         "--eval-samples-train",
         type=int,
-        default=0,
-        help="Random train images for PQ (0 = skip train metrics)",
+        default=0,       
     )
     t.add_argument(
         "--run-name",
         type=str,
         default="m2f"        
+    )
+    t.add_argument(
+        "--augment",
+        action="store_true",        
     )
     i = sub.add_parser("infer")
     i.add_argument("--submit", action="store_true")
@@ -285,6 +290,7 @@ def main() -> None:
             args.eval_samples_val,
             args.eval_samples_train,
             args.run_name,
+            args.augment,
         )
     elif args.cmd == "infer":
         cmd_infer(args.submit, args.weights)

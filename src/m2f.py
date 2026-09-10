@@ -52,17 +52,42 @@ def build(size: int = 512):
     return processor, model
 
 
+def _augment(
+    image: np.ndarray, masks: list[np.ndarray], rng: np.random.RandomState
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Применяет случайные геометрические аугментации к изображению и маскам синхронно.
+    params:
+        image: изображение (H, W, 3)
+        masks: список бинарных масок (H, W)
+        rng: генератор случайных чисел
+    returns:
+        кортеж из преобразованных image и masks
+    """
+    if rng.rand() < 0.5:
+        image = image[:, ::-1]
+        masks = [m[:, ::-1] for m in masks]
+    k = rng.randint(0, 4)
+    if k:
+        image = np.rot90(image, k)
+        masks = [np.rot90(m, k) for m in masks]
+    return image, masks
+
+
 class Magfilo(Dataset):
     """Датасет MAGFiLO из train-изображений."""
 
-    def __init__(self, size: int = 512, min_area: int = DATASET_MIN_AREA) -> None:
+    def __init__(
+        self, size: int = 512, min_area: int = DATASET_MIN_AREA, augment: bool = False
+    ) -> None:
         """Составляет список train-изображений, исключая валидационный сплит.
         params:
             size: сторона случайного кропа
             min_area: минимальная площадь маски, чтобы она сохранилась в кропе
+            augment: использовать случайные геометрические аугментации (flip/повороты)
         """
         self.size = size
         self.min_area = min_area
+        self.augment = augment
         self.rng = np.random.RandomState(DATA_SEED)
         self.coco = load_coco()
         val = ensure_val_split(self.coco)
@@ -102,13 +127,16 @@ class Magfilo(Dataset):
                 cropped = [m[y : y + self.size, x : x + self.size] for m in masks]
                 cropped = [m for m in cropped if int(m.sum()) >= self.min_area]
                 if cropped:
-                    return {"image": crop, "masks": cropped}
-            image = image[y : y + self.size, x : x + self.size]
-            masks = cropped
-        return {
-            "image": image,
-            "masks": [m for m in masks if int(m.sum()) >= self.min_area],
-        }
+                    image, masks = crop, cropped
+                    break
+            else:
+                image = image[y : y + self.size, x : x + self.size]
+                masks = cropped
+        else:
+            masks = [m for m in masks if int(m.sum()) >= self.min_area]
+        if self.augment:
+            image, masks = _augment(image, masks, self.rng)
+        return {"image": image, "masks": masks}
 
 
 def collate(processor, batch: list[dict]) -> dict:
@@ -338,6 +366,7 @@ def log_train(
     eval_val_samples: int = 0,
     eval_train_samples: int = 0,
     run_name: str = "m2f",
+    augment: bool = False,
 ) -> dict:
     """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub.
     params:
@@ -350,6 +379,7 @@ def log_train(
         eval_val_samples: число случайных изображений для val PQ (0 — вся валидация)
         eval_train_samples: число случайных изображений для train PQ (0 — не считать)
         run_name: имя MLflow run на DagsHub
+        augment: использовать аугментации (flip/повороты) при обучении
     returns:
         словарь с историей train_loss, train_pq и val_pq по эпохам
     """
@@ -360,7 +390,7 @@ def log_train(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     processor, model = build(size)
     model.to(device).train()
-    data = Magfilo(size=size)
+    data = Magfilo(size=size, augment=augment)
     if not data:
         raise SystemExit("Empty train split")
     loader = DataLoader(
@@ -399,6 +429,7 @@ def log_train(
                     "lr": lr,
                     "weight_decay": 0.05,
                     "workers": workers,
+                    "augment": augment,
                 }
             )
         except Exception as exc:
@@ -530,6 +561,7 @@ def train(
     eval_val_samples: int = 0,
     eval_train_samples: int = 0,
     run_name: str = "m2f",
+    augment: bool = False,
 ) -> Path:
     """Обучает Mask2Former на MAGFiLO: выполняет обучение через log_train (с DagsHub-логированием, если оно настроено), сохраняет чекпоинт и процессор.
     params:
@@ -542,6 +574,7 @@ def train(
         eval_val_samples: число случайных изображений для val PQ (0 — вся валидация)
         eval_train_samples: число случайных изображений для train PQ (0 — не считать)
         run_name: имя MLflow run на DagsHub
+        augment: использовать аугментации (flip/повороты) при обучении
     returns:
         путь к сохранённому чекпоинту last.pt
     """
@@ -555,5 +588,6 @@ def train(
         eval_val_samples=eval_val_samples,
         eval_train_samples=eval_train_samples,
         run_name=run_name,
+        augment=augment,
     )
     return config.models_path / "last.pt"
