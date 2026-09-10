@@ -70,7 +70,13 @@ def _load_model(weights: Path | None):
     except TypeError:
         checkpoint = torch.load(weights, map_location=device)
 
-    processor, model = build(int(checkpoint.get("size", 512)))
+    processor, model = build(
+        int(checkpoint.get("size", 512)),
+        backbone=checkpoint.get("backbone", "tiny"),
+        no_object_weight=float(checkpoint.get("no_object_weight", 0.1)),
+        dice_weight=float(checkpoint.get("dice_weight", 5.0)),
+        mask_weight=float(checkpoint.get("mask_weight", 5.0)),
+    )
     model.load_state_dict(checkpoint["model"], strict=False)
     model.to(device).eval()
     return weights, checkpoint, processor, model, device
@@ -193,30 +199,117 @@ def cmd_baseline(submit: bool, viz: int) -> None:
         _write_csv(OUTPUTS / "submission_baseline.csv", csv_rows)
 
 
-def cmd_train(smoke: bool, size: int, epochs: int, max_steps: int, accum: int) -> None:
+def cmd_train(
+    smoke: bool,
+    size: int,
+    epochs: int,
+    max_steps: int,
+    accum: int,
+    backbone: str,
+    object_crop_prob: float,
+    negative_crop_prob: float,
+    full_image_epochs: int,
+    no_object_weight: float,
+    dice_weight: float,
+    mask_weight: float,
+    warmup_epochs: int,
+    lr: float,
+    backbone_lr_mult: float,
+) -> None:
     from src.m2f import train
 
     if smoke:
         epochs, max_steps = 1, max_steps or 30
-    train(size=size, epochs=epochs, max_steps=max_steps, accum=accum)
+    train(
+        size=size,
+        epochs=epochs,
+        max_steps=max_steps,
+        accum=accum,
+        backbone=backbone,
+        object_crop_prob=object_crop_prob,
+        negative_crop_prob=negative_crop_prob,
+        full_image_epochs=full_image_epochs,
+        no_object_weight=no_object_weight,
+        dice_weight=dice_weight,
+        mask_weight=mask_weight,
+        warmup_epochs=warmup_epochs,
+        lr=lr,
+        backbone_lr_mult=backbone_lr_mult,
+    )
 
 
-def _save_worst(rows, items, model, processor, device, score_thr: float, min_area: int, count: int) -> None:
+def _predict_for_infer(
+    model,
+    processor,
+    image: np.ndarray,
+    device,
+    score_thr: float,
+    min_area: int,
+    tiled: bool,
+    tile_size: int,
+    tile_overlap: int,
+    merge_overlap: float,
+):
+    if tiled:
+        from src.m2f import predict_masks_tiled
+
+        return predict_masks_tiled(
+            model,
+            processor,
+            image,
+            device,
+            score_thr=score_thr,
+            min_area=min_area,
+            tile_size=tile_size,
+            overlap=tile_overlap,
+            merge_overlap=merge_overlap,
+            include_full=True,
+        )
+
     from src.m2f import predict_masks
 
+    return predict_masks(model, processor, image, device, score_thr=score_thr, min_area=min_area)
+
+
+def _save_worst(
+    rows,
+    items,
+    model,
+    processor,
+    device,
+    score_thr: float,
+    min_area: int,
+    count: int,
+    tiled: bool,
+    tile_size: int,
+    tile_overlap: int,
+    merge_overlap: float,
+) -> None:
     if count <= 0:
         return
 
     item_by_stem = {image_stem(info["file_name"]): (coco, info, path) for coco, info, path in items}
     worst = sorted(rows, key=lambda row: (row["pq"], -row["fn"], -row["fp"]))[:count]
-    out_dir = OUTPUTS / "m2f" / "viz" / f"score_{score_thr:.2f}_area_{min_area}"
+    mode = "tiled" if tiled else "full"
+    out_dir = OUTPUTS / "m2f" / "viz" / f"{mode}_score_{score_thr:.2f}_area_{min_area}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for rank, row in enumerate(worst, start=1):
         coco, info, path = item_by_stem[row["stem"]]
         image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         gt = instances_for_image(coco, info["id"])
-        pred = predict_masks(model, processor, image, device, score_thr=score_thr, min_area=min_area)
+        pred = _predict_for_infer(
+            model,
+            processor,
+            image,
+            device,
+            score_thr,
+            min_area,
+            tiled,
+            tile_size,
+            tile_overlap,
+            merge_overlap,
+        )
         vis = _draw_overlay(image, gt, pred, row)
         name = f"{rank:02d}_pq_{row['pq']:.3f}_{row['stem']}.jpg"
         cv2.imwrite(str(out_dir / name), vis)
@@ -224,19 +317,46 @@ def _save_worst(rows, items, model, processor, device, score_thr: float, min_are
     print(f"Saved {len(worst)} visualizations to {out_dir}")
 
 
-def cmd_infer(submit: bool, weights: Path | None, score_thr: float, min_area: int, viz_worst: int) -> None:
+def cmd_infer(
+    submit: bool,
+    weights: Path | None,
+    score_thr: float,
+    min_area: int,
+    viz_worst: int,
+    tiled: bool,
+    tile_size: int,
+    tile_overlap: int,
+    merge_overlap: float,
+    limit: int,
+) -> None:
     from tqdm import tqdm
-    from src.m2f import predict_masks
 
     weights, checkpoint, processor, model, device = _load_model(weights)
     items = _val_items()
+    if limit > 0:
+        items = items[:limit]
     rows = []
+    mode = "dual-scale tiled" if tiled else "full image"
 
-    print(f"infer val: {len(items)} images | score={score_thr} | min_area={min_area}", flush=True)
+    print(
+        f"infer val: {len(items)} images | mode={mode} | score={score_thr} | min_area={min_area}",
+        flush=True,
+    )
     for coco, info, path in tqdm(items, desc="infer"):
         image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         gt = instances_for_image(coco, info["id"])
-        pred = predict_masks(model, processor, image, device, score_thr=score_thr, min_area=min_area)
+        pred = _predict_for_infer(
+            model,
+            processor,
+            image,
+            device,
+            score_thr,
+            min_area,
+            tiled,
+            tile_size,
+            tile_overlap,
+            merge_overlap,
+        )
         metrics = panoptic_quality(gt, pred)
         metrics["stem"] = image_stem(info["file_name"])
         rows.append(metrics)
@@ -244,7 +364,8 @@ def cmd_infer(submit: bool, weights: Path | None, score_thr: float, min_area: in
     summary = _summary(rows)
     out_dir = OUTPUTS / "m2f"
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "val_metrics_m2f.json").write_text(
+    metrics_name = "val_metrics_m2f_tiled.json" if tiled else "val_metrics_m2f.json"
+    (out_dir / metrics_name).write_text(
         json.dumps(
             {
                 "config": {
@@ -252,6 +373,11 @@ def cmd_infer(submit: bool, weights: Path | None, score_thr: float, min_area: in
                     "epoch": checkpoint.get("epoch"),
                     "score_thr": score_thr,
                     "min_area": min_area,
+                    "tiled": tiled,
+                    "tile_size": tile_size if tiled else None,
+                    "tile_overlap": tile_overlap if tiled else None,
+                    "merge_overlap": merge_overlap if tiled else None,
+                    "images": len(items),
                 },
                 "summary": summary,
                 "per_image": rows,
@@ -262,13 +388,37 @@ def cmd_infer(submit: bool, weights: Path | None, score_thr: float, min_area: in
     )
     print("Home PQ (Mask2Former):", round(summary["pq"], 4), summary)
 
-    _save_worst(rows, items, model, processor, device, score_thr, min_area, viz_worst)
+    _save_worst(
+        rows,
+        items,
+        model,
+        processor,
+        device,
+        score_thr,
+        min_area,
+        viz_worst,
+        tiled,
+        tile_size,
+        tile_overlap,
+        merge_overlap,
+    )
 
     if submit:
         csv_rows = []
         for path in sorted(p for p in TEST_IMAGES.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}):
             image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-            pred = predict_masks(model, processor, image, device, score_thr=score_thr, min_area=min_area)
+            pred = _predict_for_infer(
+                model,
+                processor,
+                image,
+                device,
+                score_thr,
+                min_area,
+                tiled,
+                tile_size,
+                tile_overlap,
+                merge_overlap,
+            )
             for i, mask in enumerate(pred, start=1):
                 csv_rows.append({"filament_id": f"{path.stem}_{i}", "segmentation_rle": mask_to_rle_counts(mask)})
         _write_csv(out_dir / "submission_m2f.csv", csv_rows)
@@ -365,12 +515,27 @@ def main() -> None:
     t.add_argument("--epochs", type=int, default=8)
     t.add_argument("--max-steps", type=int, default=0)
     t.add_argument("--accum", type=int, default=8, help="Gradient accumulation steps")
+    t.add_argument("--backbone", choices=["tiny", "small"], default="tiny")
+    t.add_argument("--object-crop-prob", type=float, default=0.7)
+    t.add_argument("--negative-crop-prob", type=float, default=0.1)
+    t.add_argument("--full-image-epochs", type=int, default=3)
+    t.add_argument("--no-object-weight", type=float, default=0.08)
+    t.add_argument("--dice-weight", type=float, default=5.0)
+    t.add_argument("--mask-weight", type=float, default=5.0)
+    t.add_argument("--warmup-epochs", type=int, default=2)
+    t.add_argument("--lr", type=float, default=1e-4)
+    t.add_argument("--backbone-lr-mult", type=float, default=0.1)
     i = sub.add_parser("infer")
     i.add_argument("--submit", action="store_true")
     i.add_argument("--weights", type=Path, default=None)
     i.add_argument("--score-thr", type=float, default=0.5)
     i.add_argument("--min-area", type=int, default=80)
     i.add_argument("--viz-worst", type=int, default=0)
+    i.add_argument("--tiled", action="store_true", help="Run full-image + overlapping tile inference")
+    i.add_argument("--tile-size", type=int, default=1024)
+    i.add_argument("--tile-overlap", type=int, default=256)
+    i.add_argument("--merge-overlap", type=float, default=0.6)
+    i.add_argument("--limit", type=int, default=0, help="Evaluate only the first N validation images")
     s = sub.add_parser("sweep")
     s.add_argument("--weights", type=Path, default=None)
     s.add_argument("--score-thrs", type=float, nargs="+", default=[0.2, 0.3, 0.4, 0.5, 0.6])
@@ -384,9 +549,36 @@ def main() -> None:
     elif args.cmd == "baseline":
         cmd_baseline(args.submit, args.viz)
     elif args.cmd == "train":
-        cmd_train(args.smoke, args.size, args.epochs, args.max_steps, args.accum)
+        cmd_train(
+            args.smoke,
+            args.size,
+            args.epochs,
+            args.max_steps,
+            args.accum,
+            args.backbone,
+            args.object_crop_prob,
+            args.negative_crop_prob,
+            args.full_image_epochs,
+            args.no_object_weight,
+            args.dice_weight,
+            args.mask_weight,
+            args.warmup_epochs,
+            args.lr,
+            args.backbone_lr_mult,
+        )
     elif args.cmd == "infer":
-        cmd_infer(args.submit, args.weights, args.score_thr, args.min_area, args.viz_worst)
+        cmd_infer(
+            args.submit,
+            args.weights,
+            args.score_thr,
+            args.min_area,
+            args.viz_worst,
+            args.tiled,
+            args.tile_size,
+            args.tile_overlap,
+            args.merge_overlap,
+            args.limit,
+        )
     else:
         cmd_sweep(args.weights, args.score_thrs, args.min_areas, args.limit, not args.no_log)
 
