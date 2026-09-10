@@ -64,12 +64,12 @@ def _augment(
         кортеж из преобразованных image и masks
     """
     if rng.rand() < 0.5:
-        image = image[:, ::-1]
-        masks = [m[:, ::-1] for m in masks]
+        image = image[:, ::-1].copy()
+        masks = [m[:, ::-1].copy() for m in masks]
     k = rng.randint(0, 4)
     if k:
-        image = np.rot90(image, k)
-        masks = [np.rot90(m, k) for m in masks]
+        image = np.rot90(image, k).copy()
+        masks = [np.rot90(m, k).copy() for m in masks]
     return image, masks
 
 
