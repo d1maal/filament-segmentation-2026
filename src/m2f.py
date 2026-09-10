@@ -176,7 +176,7 @@ def predict_masks(
     processor,
     image: np.ndarray,
     device,
-    score_thr: float = 0.5,
+    score_thr: float = 0.3,
     min_area: int = 80,
 ) -> list[np.ndarray]:
     """Делает инференс модели на одном изображении.
