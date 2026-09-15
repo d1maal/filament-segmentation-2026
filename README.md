@@ -18,9 +18,28 @@ python run.py check
 python run.py baseline --viz 8          # needs competition data
 python run.py train --smoke             # 30 steps, Kaggle GPU
 python run.py train --size 512 --epochs 8
+python run.py train --size 1024 --epochs 8 --run-name test_run --eval-samples-val 100 --eval-samples-train 200
+python run.py train --augment              # flip/rotate augmentation
 python run.py infer --submit
 ```
 
 On Kaggle: GPU notebook, Add Data = this competition, clone or zip-upload this repo (no `.venv`), import `notebooks/kaggle_mask2former.ipynb`. Paste errors back here.
 
 Home PQ: match instances at IoU ≥ 0.5, then `sum(IoU) / (TP + 0.5 FP + 0.5 FN)`. Val is whole images.
+
+Training flags:
+
+- `--run-name NAME` — MLflow run name on DagsHub (default `m2f`);
+- `--eval-samples-val N` — PQ val on N random val images (0 = all val);
+- `--eval-samples-train N` — PQ train on N random train images (0 = train PQ skipped);
+- `--augment` — random geometric augmentation (horizontal flip + 90° rotations) for training crops (default off).
+
+PQ runs on whole 2048×2048 images for both train and val each epoch (when train eval is enabled).
+
+Artifacts per run, `outputs/m2f/experiments/<run_name>/`:
+
+```
+metrics.csv         epoch, train_loss, train_pq, val_pq per epoch
+weights/epoch_N.pt  weights after each epoch
+best.pt             best weights by val_pq
+```

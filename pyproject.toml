@@ -1,0 +1,33 @@
+[project]
+name = "solar-filament"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+dependencies = [
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "ipykernel>=6.29.5",
+    "opencv-python>=5.0.0.93",
+    "pycocotools>=2.0.11",
+    "tqdm>=4.70.0",
+    "transformers>=5.16.1",
+    "accelerate>=1.14.0",
+    "safetensors>=0.8.0",
+    "torchvision>=0.29.0",
+    "scipy>=1.17.1",
+    "mlflow>=3.16.0",
+    "python-dotenv>=1.2.3",
+    "dagshub>=0.7.2",
+]
+
+[dependency-groups]
+dev = [    
+    "mypy>=1.19.1",
+    "ruff>=0.1.0",
+]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+follow_imports = "skip"
