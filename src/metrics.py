@@ -77,7 +77,15 @@ def aggregate(rows: list[dict]) -> dict:
         словарь с агрегированными pq, tp, fp, fn, splits, merges и числом изображений
     """
     if not rows:
-        return {"pq": 0.0, "images": 0}
+        return {
+            "pq": 0.0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "splits": 0,
+            "merges": 0,
+            "images": 0,
+        }
     tp = sum(r["tp"] for r in rows)
     fp = sum(r["fp"] for r in rows)
     fn = sum(r["fn"] for r in rows)

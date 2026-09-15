@@ -2,6 +2,10 @@ numpy>=1.24
 opencv-python>=4.8
 pycocotools>=2.0.7
 tqdm>=4.66
+python-dotenv>=1.0
+matplotlib>=3.8
+mlflow>=2.0
+dagshub>=0.3
 # Kaggle GPU only (torch is already there):
 transformers>=4.40
 accelerate>=0.30
