@@ -103,7 +103,7 @@ class FilamentMaskRCNNDataset(Dataset):
             "boxes": boxes_tensor,
             "labels": labels,
             "masks": masks_tensor,
-            "image_id": torch.tensor(info["id"], dtype=torch.int64),
+            "image_id": torch.tensor(idx, dtype=torch.int64),
         }
 
         # IMPORTANT: do not resize here. Torchvision's Mask R-CNN transform
