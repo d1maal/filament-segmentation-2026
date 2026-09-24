@@ -27,6 +27,8 @@ from src.models.m2f.dataset import DATA_SEED, Magfilo, collate
 from src.models.m2f.inference import predict_masks
 from src.tracking.dagshub import _log_training_artifacts, init_dagshub
 
+MAX_STEPS = 0
+
 
 @torch.no_grad()
 def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
@@ -117,7 +119,7 @@ def log_train(
     epochs: int = 8,
     max_steps: int = 0,
     accum: int = 8,
-    lr: float = 1e-4,
+    lr: float = 3e-4,
     workers: int = 0,
     eval_val_samples: int = 0,
     eval_train_samples: int = 0,
@@ -199,7 +201,7 @@ def log_train(
         opt, max(1, math.ceil(len(loader) / max(1, accum))), epochs, warmup_epochs
     )
     try:
-        scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
+        scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
         autocast = lambda: torch.amp.autocast("cuda", enabled=device.type == "cuda")
     except (TypeError, AttributeError):
         scaler = torch.cuda.amp.GradScaler(enabled=device.type == "cuda")
@@ -251,7 +253,7 @@ def log_train(
         data.set_full_image(use_full)
         mode = "full" if use_full else "crop"
         running, seen, step = 0.0, 0, 0
-        opt.zero_grad(set_to_none=True)
+        opt.zero_grad()
         for step, batch in enumerate(tqdm(loader, desc=f"epoch {epoch} [{mode}]"), start=1):
             with autocast():
                 loss = (
@@ -266,7 +268,7 @@ def log_train(
             if step % accum == 0:
                 scaler.step(opt)
                 scaler.update()
-                opt.zero_grad(set_to_none=True)
+                opt.zero_grad()
                 scheduler.step()
             running += float(loss.detach().cpu()) * accum
             seen += 1
@@ -276,7 +278,7 @@ def log_train(
         if seen and step % accum:
             scaler.step(opt)
             scaler.update()
-            opt.zero_grad(set_to_none=True)
+            opt.zero_grad()
             scheduler.step()
         bundle = {"model": model.state_dict(), "size": size, "epoch": epoch, **extra}
         torch.save(bundle, ckpt)
@@ -381,19 +383,11 @@ def cmd_train(
     smoke: bool,
     size: int,
     epochs: int,
-    max_steps: int,
-    accum: int,
     eval_val_samples: int,
     eval_train_samples: int,
     run_name: str,
-    augment: bool,
     backbone: str,
-    object_crop_prob: float,
-    negative_crop_prob: float,
     full_image_epochs: int,
-    no_object_weight: float,
-    dice_weight: float,
-    mask_weight: float,
     warmup_epochs: int,
     lr: float,
     backbone_lr_mult: float,
@@ -403,41 +397,34 @@ def cmd_train(
         smoke: короткий прогон
         size: сторона кропа
         epochs: число эпох
-        max_steps: лимит шагов (0 — без лимита)
-        accum: накопление градиента
         eval_val_samples: сколько val-картинок для PQ после эпохи (0 — все)
         eval_train_samples: сколько train-картинок для PQ (0 — не считать)
         run_name: имя run на DagsHub
-        augment: геометрические аугментации
         backbone: tiny или small
-        object_crop_prob: доля кропов вокруг филамента
-        negative_crop_prob: доля пустых кропов
         full_image_epochs: сколько последних эпох на полном диске
-        no_object_weight: вес класса «нет объекта»
-        dice_weight: вес Dice
-        mask_weight: вес mask-лосса
         warmup_epochs: эпохи разогрева lr
         lr: скорость обучения
         backbone_lr_mult: множитель lr энкодера
     """
+    max_steps = MAX_STEPS
     if smoke:
         epochs, max_steps = 1, max_steps or 30
     train(
         size=size,
         epochs=epochs,
         max_steps=max_steps,
-        accum=accum,
+        accum=config.train.accum,
         eval_val_samples=eval_val_samples,
         eval_train_samples=eval_train_samples,
         run_name=run_name,
-        augment=augment,
+        augment=config.train.augment,
         backbone=backbone,
-        object_crop_prob=object_crop_prob,
-        negative_crop_prob=negative_crop_prob,
+        object_crop_prob=config.train.object_crop_prob,
+        negative_crop_prob=config.train.negative_crop_prob,
         full_image_epochs=full_image_epochs,
-        no_object_weight=no_object_weight,
-        dice_weight=dice_weight,
-        mask_weight=mask_weight,
+        no_object_weight=config.train.no_object_weight,
+        dice_weight=config.train.dice_weight,
+        mask_weight=config.train.mask_weight,
         warmup_epochs=warmup_epochs,
         lr=lr,
         backbone_lr_mult=backbone_lr_mult,

@@ -61,6 +61,19 @@ class DagshubConfig:
 
 
 @dataclass
+class TrainConfig:
+    """Хранит фиксированные гиперпараметры обучения Mask2Former."""
+
+    accum: int = 8
+    augment: bool = True
+    object_crop_prob: float = 0.7
+    negative_crop_prob: float = 0.1
+    no_object_weight: float = 0.08
+    dice_weight: float = 5.0
+    mask_weight: float = 5.0
+
+
+@dataclass
 class Config:
     """Хранит все пути проекта и настройки логирования в DagsHub."""
 
@@ -76,6 +89,7 @@ class Config:
     submission_model_path: Path = field(init=False)
 
     dagshub: DagshubConfig = field(default_factory=DagshubConfig)
+    train: TrainConfig = field(default_factory=TrainConfig)
 
     def __post_init__(self) -> None:
         """Вычисляет производные пути из корня датасета и выходной папки."""
