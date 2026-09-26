@@ -16,6 +16,36 @@ def _iou(a: np.ndarray, b: np.ndarray) -> float:
     return float(inter / union) if union else 0.0
 
 
+def _iou_matrix(
+    gt: list[np.ndarray], pred: list[np.ndarray], chunk: int = 1 << 21
+) -> np.ndarray:
+    """Матрица IoU всех пар (gt × pred) через одно BLAS-умножение.
+    params:
+        gt: список истинных масок
+        pred: список предсказанных масок
+        chunk: размер чанка по пикселям для ограничения пиковой памяти
+    returns:
+        массив (n_gt, n_pred) со значениями IoU
+    """
+    n_gt, n_pred = len(gt), len(pred)
+    iou = np.zeros((n_gt, n_pred), dtype=np.float64)
+    if not n_gt or not n_pred:
+        return iou
+    g_bin = np.stack([g > 0 for g in gt]).reshape(n_gt, -1)
+    p_bin = np.stack([p > 0 for p in pred]).reshape(n_pred, -1)
+    area_g = g_bin.sum(axis=1, dtype=np.int64)
+    area_p = p_bin.sum(axis=1, dtype=np.int64)
+    inter = np.zeros((n_gt, n_pred), dtype=np.float32)
+    for start in range(0, g_bin.shape[1], chunk):
+        stop = min(g_bin.shape[1], start + chunk)
+        g32 = g_bin[:, start:stop].astype(np.float32)
+        p32 = p_bin[:, start:stop].astype(np.float32)
+        inter += g32 @ p32.T
+    union = area_g[:, None] + area_p[None, :] - inter.astype(np.int64)
+    np.divide(inter, union, out=iou, where=union > 0)
+    return iou
+
+
 def panoptic_quality(
     gt: list[np.ndarray], pred: list[np.ndarray], thr: float = 0.5
 ) -> dict:
@@ -27,10 +57,7 @@ def panoptic_quality(
     returns:
         словарь с метриками: pq, sq, tp, fp, fn, splits, merges, n_gt, n_pred
     """
-    iou = np.zeros((len(gt), len(pred)))
-    for i, g in enumerate(gt):
-        for j, p in enumerate(pred):
-            iou[i, j] = _iou(g > 0, p > 0)
+    iou = _iou_matrix(gt, pred)
     used_g, used_p, matches = set(), set(), []
     if iou.size:
         for idx in np.argsort(-iou, axis=None):

@@ -98,6 +98,41 @@ def cmd_check() -> None:
     a[5:15, 5:12] = 1
     b[5:15, 14:20] = 1
     assert panoptic_quality([m], [a, b])["splits"] == 1
+    rng = np.random.default_rng(7)
+    for _ in range(25):
+        gt = [
+            rng.random((64, 64)) < rng.uniform(0.01, 0.2)
+            for _ in range(rng.integers(0, 5))
+        ]
+        pred = [
+            rng.random((64, 64)) < rng.uniform(0.01, 0.2)
+            for _ in range(rng.integers(0, 5))
+        ]
+        got = panoptic_quality(gt, pred)
+        ref = np.zeros((len(gt), len(pred)))
+        for i, g in enumerate(gt):
+            for j, p in enumerate(pred):
+                inter = int(np.logical_and(g > 0, p > 0).sum())
+                union = int(np.logical_or(g > 0, p > 0).sum())
+                ref[i, j] = inter / union if union else 0.0
+        used_g, used_p, matches = set(), set(), []
+        if ref.size:
+            for idx in np.argsort(-ref, axis=None):
+                gi, pj = map(int, np.unravel_index(int(idx), ref.shape))
+                if ref[gi, pj] < 0.5:
+                    break
+                if gi in used_g or pj in used_p:
+                    continue
+                used_g.add(gi)
+                used_p.add(pj)
+                matches.append(float(ref[gi, pj]))
+        tp = len(matches)
+        denom = tp + 0.5 * (len(pred) - tp) + 0.5 * (len(gt) - tp)
+        ref_pq = sum(matches) / denom if denom else 0.0
+        assert abs(got["pq"] - ref_pq) < 1e-9
+        assert got["tp"] == tp
+        assert got["fp"] == len(pred) - tp
+        assert got["fn"] == len(gt) - tp
     rgb = three_channel(np.full((64, 64), 120, np.uint8))
     assert rgb.shape == (64, 64, 3)
     assert mask_to_rle_counts(m)
