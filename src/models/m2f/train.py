@@ -295,7 +295,12 @@ def log_train(
         history["val_pq"].append(val_pq)
         history["train_pq"].append(train_pq)
         if run is not None:
-            metrics = {"train_loss": avg_loss, "val_pq": val_pq}
+            metrics = {
+                "train_loss": avg_loss,
+                "val_pq": val_pq,
+                "lr": opt.param_groups[1]["lr"],
+                "lr_backbone": opt.param_groups[0]["lr"],
+            }
             if train_pq is not None:
                 metrics["train_pq"] = train_pq
             mlflow.log_metrics(metrics, step=epoch)
