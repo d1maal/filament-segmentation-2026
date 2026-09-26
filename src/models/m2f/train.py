@@ -31,7 +31,7 @@ MAX_STEPS = 0
 
 
 @torch.no_grad()
-def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
+def _eval_val(model, processor, device, eval_samples: int = 0) -> dict:
     """Считает Home PQ модели на валидационных изображениях.
     params:
         model: обученная модель Mask2Former
@@ -39,7 +39,7 @@ def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
         device: устройство выполнения вычислений
         eval_samples: число случайных изображений для оценки (0 — все)
     returns:
-        агрегированный PQ по валидации (0, если нет изображений)
+        агрегированные метрики по валидации (pq, sq, rq, tp, fp, fn, ...)
     """
     items = _val_items()
     if eval_samples and len(items) > eval_samples:
@@ -51,13 +51,11 @@ def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
             continue
         pred = predict_masks(model, processor, img, device)
         rows.append(panoptic_quality(instances_for_image(coco, info["id"]), pred))
-    if not rows:
-        return 0.0
-    return float(aggregate(rows)["pq"])
+    return aggregate(rows)
 
 
 @torch.no_grad()
-def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
+def _eval_train(model, processor, device, eval_samples: int = 0) -> dict:
     """Считает Home PQ модели на тренировочных изображениях.
     params:
         model: обученная модель Mask2Former
@@ -65,7 +63,7 @@ def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
         device: устройство выполнения вычислений
         eval_samples: число случайных изображений для оценки (0 — не считать)
     returns:
-        агрегированный PQ по трейну (0, если нет изображений)
+        агрегированные метрики по трейну (pq, sq, rq, tp, fp, fn, ...)
     """
     coco = load_coco()
     val = ensure_val_split(coco)
@@ -85,9 +83,7 @@ def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
             continue
         pred = predict_masks(model, processor, img, device)
         rows.append(panoptic_quality(instances_for_image(coco, info["id"]), pred))
-    if not rows:
-        return 0.0
-    return float(aggregate(rows)["pq"])
+    return aggregate(rows)
 
 
 def _make_scheduler(optimizer, updates_per_epoch: int, epochs: int, warmup_epochs: int):
@@ -287,25 +283,60 @@ def log_train(
         avg_loss = running / max(seen, 1)
         history["train_loss"].append(avg_loss)
         model.eval()
-        val_pq = _eval_val(model, processor, device, eval_val_samples)
-        train_pq = (
+        val = _eval_val(model, processor, device, eval_val_samples)
+        train = (
             _eval_train(model, processor, device, eval_train_samples) if eval_train_samples else None
         )
         model.train()
+        val_pq = float(val["pq"])
+        train_pq = float(train["pq"]) if train is not None else None
         history["val_pq"].append(val_pq)
         history["train_pq"].append(train_pq)
         if run is not None:
             metrics = {
                 "train_loss": avg_loss,
                 "val_pq": val_pq,
+                "val_tp": val["tp"],
+                "val_fp": val["fp"],
+                "val_fn": val["fn"],
+                "val_sq": val["sq"],
+                "val_rq": val["rq"],
+                "val_precision": val["precision"],
+                "val_recall": val["recall"],
                 "lr": opt.param_groups[1]["lr"],
                 "lr_backbone": opt.param_groups[0]["lr"],
             }
-            if train_pq is not None:
-                metrics["train_pq"] = train_pq
+            if train is not None:
+                metrics.update(
+                    {
+                        "train_pq": train_pq,
+                        "train_tp": train["tp"],
+                        "train_fp": train["fp"],
+                        "train_fn": train["fn"],
+                        "train_sq": train["sq"],
+                        "train_rq": train["rq"],
+                        "train_precision": train["precision"],
+                        "train_recall": train["recall"],
+                    }
+                )
             mlflow.log_metrics(metrics, step=epoch)
         metrics_rows.append(
-            {"epoch": epoch, "train_loss": avg_loss, "train_pq": train_pq, "val_pq": val_pq}
+            {
+                "epoch": epoch,
+                "train_loss": avg_loss,
+                "train_pq": train_pq,
+                "val_pq": val_pq,
+                "val_tp": val["tp"],
+                "val_fp": val["fp"],
+                "val_fn": val["fn"],
+                "val_sq": val["sq"],
+                "val_rq": val["rq"],
+                "train_tp": train["tp"] if train is not None else None,
+                "train_fp": train["fp"] if train is not None else None,
+                "train_fn": train["fn"] if train is not None else None,
+                "train_sq": train["sq"] if train is not None else None,
+                "train_rq": train["rq"] if train is not None else None,
+            }
         )
         if val_pq > best_pq:
             best_pq = val_pq
@@ -317,7 +348,25 @@ def log_train(
         if max_steps and step_i >= max_steps:
             break
     with (run_dir / "metrics.csv").open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["epoch", "train_loss", "train_pq", "val_pq"])
+        w = csv.DictWriter(
+            f,
+            fieldnames=[
+                "epoch",
+                "train_loss",
+                "train_pq",
+                "val_pq",
+                "val_tp",
+                "val_fp",
+                "val_fn",
+                "val_sq",
+                "val_rq",
+                "train_tp",
+                "train_fp",
+                "train_fn",
+                "train_sq",
+                "train_rq",
+            ],
+        )
         w.writeheader()
         w.writerows(metrics_rows)
     processor.save_pretrained(out / "processor")

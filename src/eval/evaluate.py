@@ -25,17 +25,7 @@ def _summary(rows: list[dict]) -> dict:
     returns:
         сводный словарь
     """
-    result = aggregate(rows)
-    tp = result.get("tp", 0)
-    fp = result.get("fp", 0)
-    fn = result.get("fn", 0)
-    iou_sum = sum(row["sq"] * row["tp"] for row in rows)
-    rq_denom = tp + 0.5 * fp + 0.5 * fn
-    result["sq"] = float(iou_sum / tp) if tp else 0.0
-    result["rq"] = float(tp / rq_denom) if rq_denom else 0.0
-    result["precision"] = float(tp / (tp + fp)) if tp + fp else 0.0
-    result["recall"] = float(tp / (tp + fn)) if tp + fn else 0.0
-    return result
+    return aggregate(rows)
 
 
 def cmd_baseline(submit: bool, viz: int) -> None:

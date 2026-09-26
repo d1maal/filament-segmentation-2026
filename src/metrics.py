@@ -108,6 +108,10 @@ def aggregate(rows: list[dict]) -> dict:
     if not rows:
         return {
             "pq": 0.0,
+            "sq": 0.0,
+            "rq": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
             "tp": 0,
             "fp": 0,
             "fn": 0,
@@ -122,6 +126,10 @@ def aggregate(rows: list[dict]) -> dict:
     denom = tp + 0.5 * fp + 0.5 * fn
     return {
         "pq": float(iou_sum / denom) if denom else 0.0,
+        "sq": float(iou_sum / tp) if tp else 0.0,
+        "rq": float(tp / denom) if denom else 0.0,
+        "precision": float(tp / (tp + fp)) if tp + fp else 0.0,
+        "recall": float(tp / (tp + fn)) if tp + fn else 0.0,
         "tp": tp,
         "fp": fp,
         "fn": fn,
