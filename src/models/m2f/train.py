@@ -114,7 +114,7 @@ def log_train(
     size: int = 512,
     epochs: int = 8,
     max_steps: int = 0,
-    accum: int = 8,
+    accum: int = 16,
     lr: float = 3e-4,
     workers: int = 0,
     eval_val_samples: int = 0,
