@@ -21,7 +21,7 @@ from src.data import (
 )
 from src.eval.val_items import _val_items
 from src.io.visualization import _save_best_worst
-from src.metrics import aggregate, panoptic_quality
+from src.metrics import PQ_IOU_THR, aggregate, panoptic_quality
 from src.models.m2f.build import CHECKPOINTS, build
 from src.models.m2f.dataset import DATA_SEED, Magfilo, collate
 from src.models.m2f.inference import predict_masks
@@ -240,6 +240,7 @@ def log_train(
                     "accum": accum,
                     "weight_decay": 0.05,
                     "workers": workers,
+                    "pq_iou_thr": PQ_IOU_THR,
                     **extra,
                 }
             )

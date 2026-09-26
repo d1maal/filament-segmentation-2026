@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+PQ_IOU_THR = 0.5
+
 
 def _iou(a: np.ndarray, b: np.ndarray) -> float:
     """Считает метрику Intersection over Union для двух бинарных масок.
@@ -23,7 +25,7 @@ def _iou_matrix(
     params:
         gt: список истинных масок
         pred: список предсказанных масок
-        chunk: размер чанка по пикселям для ограничения пиковой памяти
+        chunk: размер чанка по пикселям
     returns:
         массив (n_gt, n_pred) со значениями IoU
     """
@@ -47,7 +49,7 @@ def _iou_matrix(
 
 
 def panoptic_quality(
-    gt: list[np.ndarray], pred: list[np.ndarray], thr: float = 0.5
+    gt: list[np.ndarray], pred: list[np.ndarray], thr: float = PQ_IOU_THR
 ) -> dict:
     """Считает Panoptic Quality между предсказанием и истинной разметкой.
     params:
