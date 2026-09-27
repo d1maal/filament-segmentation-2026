@@ -1,5 +1,6 @@
 from src.models.m2f.build import CHECKPOINTS, build, load_checkpoint
 from src.models.m2f.dataset import DATA_SEED, DATASET_MIN_AREA, Magfilo, collate
+from src.models.m2f.ema import ModelEMA
 from src.models.m2f.inference import (
     _instances_from_result,
     _predict,
@@ -24,6 +25,7 @@ __all__ = [
     "DATASET_MIN_AREA",
     "DATA_SEED",
     "Magfilo",
+    "ModelEMA",
     "_eval_train",
     "_eval_val",
     "_instances_from_result",

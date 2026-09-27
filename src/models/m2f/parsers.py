@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--backbone", choices=["tiny", "small"], default="tiny")
     t.add_argument("--full-image-epochs", type=int, default=3)
     t.add_argument("--warmup-epochs", type=int, default=2)
-    t.add_argument("--lr", type=float, default=1e-4)
+    t.add_argument("--lr", type=float, default=3e-4)
     t.add_argument("--backbone-lr-mult", type=float, default=0.1)
     i = sub.add_parser("infer")
     i.add_argument("--submit", action="store_true")

@@ -24,10 +24,15 @@ from src.io.visualization import _save_best_worst
 from src.metrics import PQ_IOU_THR, aggregate, panoptic_quality
 from src.models.m2f.build import CHECKPOINTS, build
 from src.models.m2f.dataset import DATA_SEED, Magfilo, collate
+from src.models.m2f.ema import ModelEMA
 from src.models.m2f.inference import predict_masks
 from src.tracking.dagshub import _log_training_artifacts, init_dagshub
 
 MAX_STEPS = 0
+ACCUM = 16
+LR = 3e-4
+GRAD_CLIP_NORM = 0.01
+EMA_DECAY = 0.999
 
 
 @torch.no_grad()
@@ -114,8 +119,8 @@ def log_train(
     size: int = 512,
     epochs: int = 8,
     max_steps: int = 0,
-    accum: int = 16,
-    lr: float = 3e-4,
+    accum: int = ACCUM,
+    lr: float = LR,
     workers: int = 0,
     eval_val_samples: int = 0,
     eval_train_samples: int = 0,
@@ -196,6 +201,7 @@ def log_train(
     scheduler = _make_scheduler(
         opt, max(1, math.ceil(len(loader) / max(1, accum))), epochs, warmup_epochs
     )
+    ema = ModelEMA(model, decay=EMA_DECAY)
     try:
         scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
         autocast = lambda: torch.amp.autocast("cuda", enabled=device.type == "cuda")
@@ -220,6 +226,7 @@ def log_train(
         "backbone_lr_mult": backbone_lr_mult,
         "lr": lr,
         "augment": augment,
+        "ema_decay": EMA_DECAY,
     }
     metrics_rows: list[dict] = []
     best_pq = -1.0
@@ -263,30 +270,38 @@ def log_train(
                 )
             scaler.scale(loss).backward()
             if step % accum == 0:
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
                 scaler.step(opt)
                 scaler.update()
                 opt.zero_grad()
                 scheduler.step()
+                ema.update(model)
             running += float(loss.detach().cpu()) * accum
             seen += 1
             step_i += 1
             if max_steps and step_i >= max_steps:
                 break
         if seen and step % accum:
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
             scaler.step(opt)
             scaler.update()
             opt.zero_grad()
             scheduler.step()
+            ema.update(model)
         bundle = {"model": model.state_dict(), "size": size, "epoch": epoch, **extra}
         torch.save(bundle, ckpt)
         torch.save(bundle, weights_dir / f"epoch_{epoch}.pt")
         avg_loss = running / max(seen, 1)
         history["train_loss"].append(avg_loss)
         model.eval()
+        ema.apply_to(model)
         val = _eval_val(model, processor, device, eval_val_samples)
         train = (
             _eval_train(model, processor, device, eval_train_samples) if eval_train_samples else None
         )
+        ema.restore(model)
         model.train()
         val_pq = float(val["pq"])
         train_pq = float(train["pq"]) if train is not None else None
@@ -295,28 +310,28 @@ def log_train(
         if run is not None:
             metrics = {
                 "train_loss": avg_loss,
-                "val_pq": val_pq,
-                "val_tp": val["tp"],
-                "val_fp": val["fp"],
-                "val_fn": val["fn"],
-                "val_sq": val["sq"],
-                "val_rq": val["rq"],
-                "val_precision": val["precision"],
-                "val_recall": val["recall"],
+                "val_pq_ema": val_pq,
+                "val_tp_ema": val["tp"],
+                "val_fp_ema": val["fp"],
+                "val_fn_ema": val["fn"],
+                "val_sq_ema": val["sq"],
+                "val_rq_ema": val["rq"],
+                "val_precision_ema": val["precision"],
+                "val_recall_ema": val["recall"],
                 "lr": opt.param_groups[1]["lr"],
                 "lr_backbone": opt.param_groups[0]["lr"],
             }
             if train is not None:
                 metrics.update(
                     {
-                        "train_pq": train_pq,
-                        "train_tp": train["tp"],
-                        "train_fp": train["fp"],
-                        "train_fn": train["fn"],
-                        "train_sq": train["sq"],
-                        "train_rq": train["rq"],
-                        "train_precision": train["precision"],
-                        "train_recall": train["recall"],
+                        "train_pq_ema": train_pq,
+                        "train_tp_ema": train["tp"],
+                        "train_fp_ema": train["fp"],
+                        "train_fn_ema": train["fn"],
+                        "train_sq_ema": train["sq"],
+                        "train_rq_ema": train["rq"],
+                        "train_precision_ema": train["precision"],
+                        "train_recall_ema": train["recall"],
                     }
                 )
             mlflow.log_metrics(metrics, step=epoch)
@@ -324,23 +339,23 @@ def log_train(
             {
                 "epoch": epoch,
                 "train_loss": avg_loss,
-                "train_pq": train_pq,
-                "val_pq": val_pq,
-                "val_tp": val["tp"],
-                "val_fp": val["fp"],
-                "val_fn": val["fn"],
-                "val_sq": val["sq"],
-                "val_rq": val["rq"],
-                "train_tp": train["tp"] if train is not None else None,
-                "train_fp": train["fp"] if train is not None else None,
-                "train_fn": train["fn"] if train is not None else None,
-                "train_sq": train["sq"] if train is not None else None,
-                "train_rq": train["rq"] if train is not None else None,
+                "train_pq_ema": train_pq,
+                "val_pq_ema": val_pq,
+                "val_tp_ema": val["tp"],
+                "val_fp_ema": val["fp"],
+                "val_fn_ema": val["fn"],
+                "val_sq_ema": val["sq"],
+                "val_rq_ema": val["rq"],
+                "train_tp_ema": train["tp"] if train is not None else None,
+                "train_fp_ema": train["fp"] if train is not None else None,
+                "train_fn_ema": train["fn"] if train is not None else None,
+                "train_sq_ema": train["sq"] if train is not None else None,
+                "train_rq_ema": train["rq"] if train is not None else None,
             }
         )
         if val_pq > best_pq:
             best_pq = val_pq
-            torch.save(bundle, run_dir / "best.pt")
+            torch.save({**bundle, "model": ema.shadow}, run_dir / "best.pt")
         print(
             f"epoch {epoch} mode={mode} loss={avg_loss:.4f} "
             f"lr={opt.param_groups[1]['lr']:.2e} -> {ckpt}"
@@ -353,18 +368,18 @@ def log_train(
             fieldnames=[
                 "epoch",
                 "train_loss",
-                "train_pq",
-                "val_pq",
-                "val_tp",
-                "val_fp",
-                "val_fn",
-                "val_sq",
-                "val_rq",
-                "train_tp",
-                "train_fp",
-                "train_fn",
-                "train_sq",
-                "train_rq",
+                "train_pq_ema",
+                "val_pq_ema",
+                "val_tp_ema",
+                "val_fp_ema",
+                "val_fn_ema",
+                "val_sq_ema",
+                "val_rq_ema",
+                "train_tp_ema",
+                "train_fp_ema",
+                "train_fn_ema",
+                "train_sq_ema",
+                "train_rq_ema",
             ],
         )
         w.writeheader()
@@ -387,8 +402,8 @@ def train(
     size: int = 512,
     epochs: int = 8,
     max_steps: int = 0,
-    accum: int = 8,
-    lr: float = 1e-4,
+    accum: int = ACCUM,
+    lr: float = LR,
     workers: int = 0,
     eval_val_samples: int = 0,
     eval_train_samples: int = 0,
@@ -468,7 +483,7 @@ def cmd_train(
         size=size,
         epochs=epochs,
         max_steps=max_steps,
-        accum=config.train.accum,
+        accum=ACCUM,
         eval_val_samples=eval_val_samples,
         eval_train_samples=eval_train_samples,
         run_name=run_name,
