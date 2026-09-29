@@ -35,6 +35,8 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
             args.warmup_epochs,
             args.lr,
             args.backbone_lr_mult,
+            args.grad_clip_norm,
+            args.ema_decay,
         )
     elif args.cmd == "infer":
         cmd_infer(

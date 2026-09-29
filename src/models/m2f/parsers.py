@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--warmup-epochs", type=int, default=2)
     t.add_argument("--lr", type=float, default=3e-4)
     t.add_argument("--backbone-lr-mult", type=float, default=0.1)
+    t.add_argument("--grad-clip-norm", type=float, default=0.03)
+    t.add_argument("--ema-decay", type=float, default=0.996)
     i = sub.add_parser("infer")
     i.add_argument("--submit", action="store_true")
     i.add_argument("--weights", type=Path, default=None)

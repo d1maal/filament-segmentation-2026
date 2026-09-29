@@ -31,8 +31,9 @@ from src.tracking.dagshub import _log_training_artifacts, init_dagshub
 MAX_STEPS = 0
 ACCUM = 16
 LR = 3e-4
-GRAD_CLIP_NORM = 0.01
-EMA_DECAY = 0.999
+GRAD_CLIP_NORM = 0.03
+EMA_DECAY = 0.996
+BACKBONE_LR_MULT = 0.3
 
 
 @torch.no_grad()
@@ -134,7 +135,9 @@ def log_train(
     dice_weight: float = 5.0,
     mask_weight: float = 5.0,
     warmup_epochs: int = 2,
-    backbone_lr_mult: float = 0.1,
+    backbone_lr_mult: float = BACKBONE_LR_MULT,
+    grad_clip_norm: float = GRAD_CLIP_NORM,
+    ema_decay: float = EMA_DECAY,
 ) -> dict:
     """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub.
     params:
@@ -157,6 +160,8 @@ def log_train(
         mask_weight: вес mask-лосса
         warmup_epochs: эпохи линейного разогрева lr
         backbone_lr_mult: множитель lr для энкодера
+        grad_clip_norm: предел нормы градиента перед шагом оптимизатора
+        ema_decay: коэффициент затухания EMA
     returns:
         словарь с историей train_loss, train_pq и val_pq по эпохам
     """
@@ -201,7 +206,7 @@ def log_train(
     scheduler = _make_scheduler(
         opt, max(1, math.ceil(len(loader) / max(1, accum))), epochs, warmup_epochs
     )
-    ema = ModelEMA(model, decay=EMA_DECAY)
+    ema = ModelEMA(model, decay=ema_decay)
     try:
         scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
         autocast = lambda: torch.amp.autocast("cuda", enabled=device.type == "cuda")
@@ -226,7 +231,8 @@ def log_train(
         "backbone_lr_mult": backbone_lr_mult,
         "lr": lr,
         "augment": augment,
-        "ema_decay": EMA_DECAY,
+        "ema_decay": ema_decay,
+        "grad_clip_norm": grad_clip_norm,
     }
     metrics_rows: list[dict] = []
     best_pq = -1.0
@@ -271,7 +277,7 @@ def log_train(
             scaler.scale(loss).backward()
             if step % accum == 0:
                 scaler.unscale_(opt)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
                 scaler.step(opt)
                 scaler.update()
                 opt.zero_grad()
@@ -417,7 +423,9 @@ def train(
     dice_weight: float = 5.0,
     mask_weight: float = 5.0,
     warmup_epochs: int = 2,
-    backbone_lr_mult: float = 0.1,
+    backbone_lr_mult: float = BACKBONE_LR_MULT,
+    grad_clip_norm: float = GRAD_CLIP_NORM,
+    ema_decay: float = EMA_DECAY,
 ) -> Path:
     """Обучает Mask2Former на MAGFiLO через log_train и возвращает путь к last.pt.
     params:
@@ -445,6 +453,8 @@ def train(
         mask_weight=mask_weight,
         warmup_epochs=warmup_epochs,
         backbone_lr_mult=backbone_lr_mult,
+        grad_clip_norm=grad_clip_norm,
+        ema_decay=ema_decay,
     )
     return config.models_path / "last.pt"
 
@@ -460,7 +470,9 @@ def cmd_train(
     full_image_epochs: int,
     warmup_epochs: int,
     lr: float,
-    backbone_lr_mult: float,
+    backbone_lr_mult: float = BACKBONE_LR_MULT,
+    grad_clip_norm: float = GRAD_CLIP_NORM,
+    ema_decay: float = EMA_DECAY,
 ) -> None:
     """Запускает обучение Mask2Former; в smoke-режиме — 1 эпоха и до 30 шагов.
     params:
@@ -475,6 +487,8 @@ def cmd_train(
         warmup_epochs: эпохи разогрева lr
         lr: скорость обучения
         backbone_lr_mult: множитель lr энкодера
+        grad_clip_norm: предел нормы градиента
+        ema_decay: коэффициент затухания EMA
     """
     max_steps = MAX_STEPS
     if smoke:
@@ -498,4 +512,6 @@ def cmd_train(
         warmup_epochs=warmup_epochs,
         lr=lr,
         backbone_lr_mult=backbone_lr_mult,
+        grad_clip_norm=grad_clip_norm,
+        ema_decay=ema_decay,
     )
