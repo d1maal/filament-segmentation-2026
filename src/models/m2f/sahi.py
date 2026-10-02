@@ -1,9 +1,3 @@
-"""Адаптер Mask2Former под sliced-инференс SAHI.
-
-Использует SAHI только для нарезки и постобработки; сам forward остаётся на
-существующем Mask2Former + processor (с 3-канальной предобработкой).
-"""
-
 from __future__ import annotations
 
 import cv2
@@ -41,7 +35,7 @@ class Mask2FormerSahiModel(DetectionModel):
 
     @torch.no_grad()
     def perform_inference(self, image: np.ndarray) -> None:
-        """Прогоняет один слайс и сохраняет список (маска, скор) в _original_predictions."""
+        """Прогоняет один слайс и сохраняет список (маска, скор)"""
         gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape[:2]
         inputs = {
@@ -61,7 +55,7 @@ class Mask2FormerSahiModel(DetectionModel):
     def _create_object_prediction_list_from_original_predictions(
         self, shift_amount_list=None, full_shape_list=None
     ) -> None:
-        """Конвертирует бинарные маски слайса в ObjectPrediction (COCO-полигоны)."""
+        """Конвертирует бинарные маски слайса в ObjectPrediction."""
         from sahi.utils.compatibility import fix_full_shape_list, fix_shift_amount_list
 
         shift_amount_list = fix_shift_amount_list(shift_amount_list)
@@ -86,7 +80,7 @@ class Mask2FormerSahiModel(DetectionModel):
 
 
 class MaskGreedyNMM(PostprocessPredictions):
-    """Жадное слияние дублей по сходству масок (аналог _merge_candidates из tiling.py)."""
+    """Жадное слияние дублей по сходству масок."""
 
     def __call__(self, object_predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
         masks = [p.mask.bool_mask if p.mask is not None else None for p in object_predictions]
