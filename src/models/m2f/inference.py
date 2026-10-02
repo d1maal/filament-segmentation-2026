@@ -204,8 +204,9 @@ def _predict(
     tile_size: int,
     tile_overlap: int,
     merge_overlap: float,
+    sahi: bool = False,
 ):
-    """Выбирает полный инференс или тайловый.
+    """Выбирает полный инференс, тайловый или SAHI.
     params:
         model: модель Mask2Former
         processor: процессор
@@ -217,9 +218,24 @@ def _predict(
         tile_size: сторона тайла
         tile_overlap: перекрытие
         merge_overlap: порог слияния дублей
+        sahi: использовать SAHI sliced-инференс
     returns:
         список масок
     """
+    if sahi:
+        from src.models.m2f.sahi import predict_masks_sahi
+
+        return predict_masks_sahi(
+            model,
+            processor,
+            image,
+            device,
+            score_thr=score_thr,
+            min_area=min_area,
+            slice_size=tile_size,
+            overlap=tile_overlap,
+            merge_overlap=merge_overlap,
+        )
     if tiled:
         return predict_masks_tiled(
             model,

@@ -140,6 +140,7 @@ def cmd_infer(
     tile_overlap: int,
     merge_overlap: float,
     limit: int,
+    sahi: bool = False,
 ) -> None:
     """Прогоняет модель по валидации, считает PQ, опционально пишет submission CSV.
     params:
@@ -159,7 +160,7 @@ def cmd_infer(
     if limit > 0:
         items = items[:limit]
     rows = []
-    mode = "tiled" if tiled else "full"
+    mode = "sahi" if sahi else ("tiled" if tiled else "full")
     print(
         f"infer val: {len(items)} images | mode={mode} | score={score_thr} | min_area={min_area}",
         flush=True,
@@ -170,14 +171,14 @@ def cmd_infer(
             raise SystemExit(f"Failed to read image: {path}")
         pred = _predict(
             model, processor, image, device, score_thr, min_area,
-            tiled, tile_size, tile_overlap, merge_overlap,
+            tiled, tile_size, tile_overlap, merge_overlap, sahi,
         )
         metrics = panoptic_quality(instances_for_image(coco, info["id"]), pred)
         metrics["stem"] = image_stem(info["file_name"])
         rows.append(metrics)
     summary = _summary(rows)
     config.models_path.mkdir(parents=True, exist_ok=True)
-    name = "val_metrics_m2f_tiled.json" if tiled else "val_metrics_m2f.json"
+    name = "val_metrics_m2f_tiled.json" if (tiled or sahi) else "val_metrics_m2f.json"
     (config.models_path / name).write_text(
         json.dumps(
             {
@@ -199,7 +200,7 @@ def cmd_infer(
     print("Home PQ (Mask2Former):", round(summary["pq"], 4), summary)
     _save_worst(
         rows, items, model, processor, device, score_thr, min_area, viz_worst,
-        tiled, tile_size, tile_overlap, merge_overlap,
+        tiled, tile_size, tile_overlap, merge_overlap, sahi,
     )
     if submit:
         csv_rows = []
@@ -211,7 +212,7 @@ def cmd_infer(
                 raise SystemExit(f"Failed to read image: {path}")
             pred = _predict(
                 model, processor, image, device, score_thr, min_area,
-                tiled, tile_size, tile_overlap, merge_overlap,
+                tiled, tile_size, tile_overlap, merge_overlap, sahi,
             )
             for i, mask in enumerate(pred, start=1):
                 csv_rows.append(

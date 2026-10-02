@@ -50,6 +50,7 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
             args.tile_overlap,
             args.merge_overlap,
             args.limit,
+            args.sahi,
         )
     elif args.cmd == "sweep":
         cmd_sweep(args.weights, args.score_thrs, args.min_areas, args.limit, not args.no_log)

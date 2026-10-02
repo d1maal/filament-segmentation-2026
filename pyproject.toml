@@ -19,6 +19,7 @@ dependencies = [
     "mlflow>=3.16.0",
     "python-dotenv>=1.2.3",
     "dagshub>=0.7.2",
+    "sahi>=0.12.0",
 ]
 
 [dependency-groups]

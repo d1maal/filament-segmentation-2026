@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--min-area", type=int, default=80)
     i.add_argument("--viz-worst", type=int, default=0)
     i.add_argument("--tiled", action="store_true")
+    i.add_argument("--sahi", action="store_true")
     i.add_argument("--tile-size", type=int, default=1024)
     i.add_argument("--tile-overlap", type=int, default=256)
     i.add_argument("--merge-overlap", type=float, default=0.6)
