@@ -64,7 +64,7 @@ class DagshubConfig:
 class TrainConfig:
     """Хранит фиксированные гиперпараметры обучения Mask2Former."""
 
-    accum: int = 8
+    accum: int = 16
     augment: bool = True
     object_crop_prob: float = 0.7
     negative_crop_prob: float = 0.1

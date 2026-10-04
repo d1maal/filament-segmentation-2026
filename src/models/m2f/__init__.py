@@ -8,6 +8,7 @@ from src.models.m2f.inference import (
     predict_masks,
     predict_masks_grid,
     predict_masks_tiled,
+    predict_masks_tta,
 )
 from src.models.m2f.parsers import build_parser
 from src.models.m2f.tiling import _mask_similarity, _merge_candidates, _tile_starts
@@ -44,5 +45,6 @@ __all__ = [
     "predict_masks",
     "predict_masks_grid",
     "predict_masks_tiled",
+    "predict_masks_tta",
     "train",
 ]

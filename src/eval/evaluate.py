@@ -141,6 +141,7 @@ def cmd_infer(
     merge_overlap: float,
     limit: int,
     sahi: bool = False,
+    tta: bool = False,
 ) -> None:
     """Прогоняет модель по валидации, считает PQ, опционально пишет submission CSV.
     params:
@@ -154,13 +155,14 @@ def cmd_infer(
         tile_overlap: перекрытие
         merge_overlap: порог слияния дублей
         limit: ограничить val первыми N картинками (0 — все)
+        tta: test-time augmentation
     """
     weights, checkpoint, processor, model, device = _load_model(weights)
     items = _val_items()
     if limit > 0:
         items = items[:limit]
     rows = []
-    mode = "sahi" if sahi else ("tiled" if tiled else "full")
+    mode = "tta" if tta else ("sahi" if sahi else ("tiled" if tiled else "full"))
     print(
         f"infer val: {len(items)} images | mode={mode} | score={score_thr} | min_area={min_area}",
         flush=True,
@@ -171,14 +173,14 @@ def cmd_infer(
             raise SystemExit(f"Failed to read image: {path}")
         pred = _predict(
             model, processor, image, device, score_thr, min_area,
-            tiled, tile_size, tile_overlap, merge_overlap, sahi,
+            tiled, tile_size, tile_overlap, merge_overlap, sahi, tta,
         )
         metrics = panoptic_quality(instances_for_image(coco, info["id"]), pred)
         metrics["stem"] = image_stem(info["file_name"])
         rows.append(metrics)
     summary = _summary(rows)
     config.models_path.mkdir(parents=True, exist_ok=True)
-    name = "val_metrics_m2f_tiled.json" if (tiled or sahi) else "val_metrics_m2f.json"
+    name = "val_metrics_m2f_tiled.json" if (tiled or sahi or tta) else "val_metrics_m2f.json"
     (config.models_path / name).write_text(
         json.dumps(
             {
@@ -188,6 +190,7 @@ def cmd_infer(
                     "score_thr": score_thr,
                     "min_area": min_area,
                     "tiled": tiled,
+                    "tta": tta,
                     "images": len(items),
                 },
                 "summary": summary,
@@ -200,7 +203,7 @@ def cmd_infer(
     print("Home PQ (Mask2Former):", round(summary["pq"], 4), summary)
     _save_worst(
         rows, items, model, processor, device, score_thr, min_area, viz_worst,
-        tiled, tile_size, tile_overlap, merge_overlap, sahi,
+        tiled, tile_size, tile_overlap, merge_overlap, sahi, tta,
     )
     if submit:
         csv_rows = []
@@ -212,7 +215,7 @@ def cmd_infer(
                 raise SystemExit(f"Failed to read image: {path}")
             pred = _predict(
                 model, processor, image, device, score_thr, min_area,
-                tiled, tile_size, tile_overlap, merge_overlap, sahi,
+                tiled, tile_size, tile_overlap, merge_overlap, sahi, tta,
             )
             for i, mask in enumerate(pred, start=1):
                 csv_rows.append(

@@ -29,7 +29,7 @@ from src.models.m2f.inference import predict_masks
 from src.tracking.dagshub import _log_training_artifacts, init_dagshub
 
 MAX_STEPS = 0
-ACCUM = 16
+ACCUM = config.train.accum
 LR = 3e-4
 GRAD_CLIP_NORM = 0.03
 EMA_DECAY = 0.996

@@ -150,6 +150,46 @@ def predict_masks_tiled(
 
 
 @torch.no_grad()
+def predict_masks_tta(
+    model,
+    processor,
+    image: np.ndarray,
+    device,
+    score_thr: float = 0.3,
+    min_area: int = 80,
+    merge_overlap: float = 0.6,
+) -> list[np.ndarray]:
+    """Инференс с test-time augmentation (повороты и отражения) и слиянием масок.
+    params:
+        model: модель Mask2Former
+        processor: процессор Mask2Former
+        image: grayscale или BGR
+        device: устройство
+        score_thr: минимальный скор
+        min_area: минимальная площадь после слияния
+        merge_overlap: порог сходства для слияния дублей
+    returns:
+        список масок
+    """
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    views: list[tuple[str, np.ndarray]] = [("", gray)]
+    views += [(f"r{k}", np.rot90(gray, k)) for k in (1, 2, 3)]
+    flipped = np.flip(gray, axis=1)
+    views += [(f"f{k}", np.rot90(flipped, k)) for k in (0, 1, 2, 3)]
+    candidates: list[tuple[np.ndarray, float]] = []
+    for name, view in views:
+        for mask, score in _predict_scored(model, processor, view, device, score_thr, 0):
+            if name == "":
+                back = mask
+            elif name[0] == "r":
+                back = np.rot90(mask, -int(name[1:]))
+            else:
+                back = np.flip(np.rot90(mask, -int(name[1:])), axis=1)
+            candidates.append((back, score))
+    return _merge_candidates(candidates, merge_overlap, min_area)
+
+
+@torch.no_grad()
 def predict_masks_grid(
     model,
     processor,
@@ -205,8 +245,9 @@ def _predict(
     tile_overlap: int,
     merge_overlap: float,
     sahi: bool = False,
+    tta: bool = False,
 ):
-    """Выбирает полный инференс, тайловый или SAHI.
+    """Выбирает полный инференс, тайловый, SAHI или TTA.
     params:
         model: модель Mask2Former
         processor: процессор
@@ -219,9 +260,20 @@ def _predict(
         tile_overlap: перекрытие
         merge_overlap: порог слияния дублей
         sahi: использовать SAHI sliced-инференс
+        tta: использовать test-time augmentation
     returns:
         список масок
     """
+    if tta:
+        return predict_masks_tta(
+            model,
+            processor,
+            image,
+            device,
+            score_thr=score_thr,
+            min_area=min_area,
+            merge_overlap=merge_overlap,
+        )
     if sahi:
         from src.models.m2f.sahi import predict_masks_sahi
 

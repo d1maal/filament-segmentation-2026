@@ -29,6 +29,7 @@ def _save_worst(
     tile_overlap: int,
     merge_overlap: float,
     sahi: bool = False,
+    tta: bool = False,
 ) -> None:
     """Сохраняет худшие по PQ кадры с overlay.
     params:
@@ -44,6 +45,7 @@ def _save_worst(
         tile_size: сторона тайла
         tile_overlap: перекрытие
         merge_overlap: порог слияния
+        tta: тот же режим, что в infer
     """
     from src.models.m2f.inference import _predict
 
@@ -51,7 +53,7 @@ def _save_worst(
         return
     by_stem = {image_stem(info["file_name"]): (coco, info, path) for coco, info, path in items}
     worst = sorted(rows, key=lambda row: (row["pq"], -row["fn"], -row["fp"]))[:count]
-    mode = "sahi" if sahi else ("tiled" if tiled else "full")
+    mode = "tta" if tta else ("sahi" if sahi else ("tiled" if tiled else "full"))
     out_dir = config.models_path / "viz" / f"{mode}_score_{score_thr:.2f}_area_{min_area}"
     out_dir.mkdir(parents=True, exist_ok=True)
     for rank, row in enumerate(worst, start=1):
@@ -59,7 +61,7 @@ def _save_worst(
         image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         pred = _predict(
             model, processor, image, device, score_thr, min_area,
-            tiled, tile_size, tile_overlap, merge_overlap, sahi,
+            tiled, tile_size, tile_overlap, merge_overlap, sahi, tta,
         )
         vis = _draw_overlay(image, instances_for_image(coco, info["id"]), pred, row)
         cv2.imwrite(str(out_dir / f"{rank:02d}_pq_{row['pq']:.3f}_{row['stem']}.jpg"), vis)
