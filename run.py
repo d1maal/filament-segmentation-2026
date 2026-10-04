@@ -34,6 +34,7 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
             args.full_image_epochs,
             args.warmup_epochs,
             args.lr,
+            args.min_lr_ratio,
             args.backbone_lr_mult,
             args.grad_clip_norm,
             args.ema_decay,

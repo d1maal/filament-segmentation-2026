@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--full-image-epochs", type=int, default=3)
     t.add_argument("--warmup-epochs", type=int, default=2)
     t.add_argument("--lr", type=float, default=3e-4)
+    t.add_argument("--min-lr-ratio", type=float, default=0.0)
     t.add_argument("--backbone-lr-mult", type=float, default=0.1)
     t.add_argument("--grad-clip-norm", type=float, default=0.03)
     t.add_argument("--ema-decay", type=float, default=0.996)

@@ -34,6 +34,7 @@ LR = 3e-4
 GRAD_CLIP_NORM = 0.03
 EMA_DECAY = 0.996
 BACKBONE_LR_MULT = 0.3
+MIN_LR_RATIO = 0.0
 
 
 @torch.no_grad()
@@ -92,18 +93,26 @@ def _eval_train(model, processor, device, eval_samples: int = 0) -> dict:
     return aggregate(rows)
 
 
-def _make_scheduler(optimizer, updates_per_epoch: int, epochs: int, warmup_epochs: int):
+def _make_scheduler(
+    optimizer,
+    updates_per_epoch: int,
+    epochs: int,
+    warmup_epochs: int,
+    min_lr_ratio: float = MIN_LR_RATIO,
+):
     """Warmup и cosine decay по шагам оптимизатора.
     params:
         optimizer: AdamW
         updates_per_epoch: число step() за эпоху
         epochs: число эпох
         warmup_epochs: число эпох линейного разогрева
+        min_lr_ratio: нижняя граница lr как доля от пика (0 — затухание до нуля)
     returns:
         LambdaLR
     """
     total_updates = max(1, updates_per_epoch * epochs)
     warmup_updates = max(0, updates_per_epoch * warmup_epochs)
+    floor = min(1.0, max(0.0, min_lr_ratio))
 
     def lr_lambda(step: int) -> float:
         if warmup_updates and step < warmup_updates:
@@ -111,7 +120,7 @@ def _make_scheduler(optimizer, updates_per_epoch: int, epochs: int, warmup_epoch
         if total_updates <= warmup_updates:
             return 1.0
         progress = min(1.0, (step - warmup_updates) / (total_updates - warmup_updates))
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
+        return floor + (1.0 - floor) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
@@ -135,6 +144,7 @@ def log_train(
     dice_weight: float = 5.0,
     mask_weight: float = 5.0,
     warmup_epochs: int = 2,
+    min_lr_ratio: float = MIN_LR_RATIO,
     backbone_lr_mult: float = BACKBONE_LR_MULT,
     grad_clip_norm: float = GRAD_CLIP_NORM,
     ema_decay: float = EMA_DECAY,
@@ -159,6 +169,7 @@ def log_train(
         dice_weight: вес Dice-лосса
         mask_weight: вес mask-лосса
         warmup_epochs: эпохи линейного разогрева lr
+        min_lr_ratio: нижняя граница lr как доля от пика (0 — затухание до нуля)
         backbone_lr_mult: множитель lr для энкодера
         grad_clip_norm: предел нормы градиента перед шагом оптимизатора
         ema_decay: коэффициент затухания EMA
@@ -204,7 +215,11 @@ def log_train(
         weight_decay=0.05,
     )
     scheduler = _make_scheduler(
-        opt, max(1, math.ceil(len(loader) / max(1, accum))), epochs, warmup_epochs
+        opt,
+        max(1, math.ceil(len(loader) / max(1, accum))),
+        epochs,
+        warmup_epochs,
+        min_lr_ratio,
     )
     ema = ModelEMA(model, decay=ema_decay)
     try:
@@ -228,6 +243,7 @@ def log_train(
         "negative_crop_prob": negative_crop_prob,
         "full_image_epochs": full_image_epochs,
         "warmup_epochs": warmup_epochs,
+        "min_lr_ratio": min_lr_ratio,
         "backbone_lr_mult": backbone_lr_mult,
         "lr": lr,
         "augment": augment,
@@ -423,6 +439,7 @@ def train(
     dice_weight: float = 5.0,
     mask_weight: float = 5.0,
     warmup_epochs: int = 2,
+    min_lr_ratio: float = MIN_LR_RATIO,
     backbone_lr_mult: float = BACKBONE_LR_MULT,
     grad_clip_norm: float = GRAD_CLIP_NORM,
     ema_decay: float = EMA_DECAY,
@@ -452,6 +469,7 @@ def train(
         dice_weight=dice_weight,
         mask_weight=mask_weight,
         warmup_epochs=warmup_epochs,
+        min_lr_ratio=min_lr_ratio,
         backbone_lr_mult=backbone_lr_mult,
         grad_clip_norm=grad_clip_norm,
         ema_decay=ema_decay,
@@ -470,6 +488,7 @@ def cmd_train(
     full_image_epochs: int,
     warmup_epochs: int,
     lr: float,
+    min_lr_ratio: float = MIN_LR_RATIO,
     backbone_lr_mult: float = BACKBONE_LR_MULT,
     grad_clip_norm: float = GRAD_CLIP_NORM,
     ema_decay: float = EMA_DECAY,
@@ -486,6 +505,7 @@ def cmd_train(
         full_image_epochs: сколько последних эпох на полном диске
         warmup_epochs: эпохи разогрева lr
         lr: скорость обучения
+        min_lr_ratio: нижняя граница lr как доля от пика (0 — затухание до нуля)
         backbone_lr_mult: множитель lr энкодера
         grad_clip_norm: предел нормы градиента
         ema_decay: коэффициент затухания EMA
@@ -511,6 +531,7 @@ def cmd_train(
         mask_weight=config.train.mask_weight,
         warmup_epochs=warmup_epochs,
         lr=lr,
+        min_lr_ratio=min_lr_ratio,
         backbone_lr_mult=backbone_lr_mult,
         grad_clip_norm=grad_clip_norm,
         ema_decay=ema_decay,
