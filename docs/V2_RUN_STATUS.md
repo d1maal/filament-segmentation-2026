@@ -14,26 +14,21 @@ Updated: 2026-10-07
 
 | Step | Status | Notes |
 |------|--------|-------|
-| Push branch with notebooks/docs | pending push | |
-| Smoke 1 epoch | pending on Kaggle | set `SMOKE=True` first |
-| Full train 30 ep @1280 | pending | `SMOKE=False`, `EVAL_LIMIT=50` |
-| Full val PQ | pending | after train cell |
+| Push branch with notebooks/docs | **done** | `12d7ef4` on `origin/feature/mask-rcnn` |
+| Kernel push + GPU run | **launched** | https://www.kaggle.com/code/dm1triyaleksandrov/mask-rcnn-v2 (v1, T4, 12h timeout) |
+| Smoke 1 epoch | skipped for overnight full run | re-run with `SMOKE=True` if this version errors early |
+| Full train 30 ep @1280 | **running / queued** | `SMOKE=False`, `EVAL_LIMIT=50` in notebook |
+| Full val PQ | pending | after train cell in same notebook |
 | Submit `submission_mask_rcnn_v2.csv` | pending | overlap assert must pass |
 
-### How to launch (Kaggle UI)
-
-1. New GPU notebook, Internet **on**, Add Data = `filament-segmentation-2026`.
-2. Secret `GITHUB_TOKEN` attached to the notebook.
-3. Upload / copy cells from `notebooks/kaggle_mask_rcnn.ipynb` **or** clone branch and `%run` / open that file.
-4. Run clone + GPU cells → set `SMOKE=True` → train 1 epoch.
-5. If OK: `SMOKE=False`, Save Version **Save & Run All** with Output.
-6. When finished: open `train_log.csv`, run val+submit cell, download `submission_mask_rcnn_v2.csv`.
+Public LB baselines (API 2026-10-07): MRCNN noolap **0.28**, M2F noolap **0.24**.
 
 ### Evening metrics checklist
 
-Fill when train progresses:
+Fill from kernel Output / `train_log.csv` when available:
 
 ```
+kernel_url: https://www.kaggle.com/code/dm1triyaleksandrov/mask-rcnn-v2
 epoch_mid (e.g. 10): loss=____ probe_pq=____
 epoch_late (e.g. 20): loss=____ probe_pq=____
 best_epoch: ____ best_probe_pq=____
@@ -43,3 +38,9 @@ public_lb: ____
 ```
 
 Compare to v1 probe best **0.301** @ epoch 20 (50-img) and full home **0.345**.
+
+### If the kernel fails early
+
+1. Open the kernel → check clone / CUDA / OOM.
+2. Interactive: set `SMOKE=True`, run 1 epoch.
+3. Fix, push notebook again: `kaggle kernels push -p <folder> -t 43200 --accelerator gpu`.
