@@ -13,6 +13,9 @@ from src.config import config
 CHECKPOINTS = {
     "tiny": "facebook/mask2former-swin-tiny-coco-instance",
     "small": "facebook/mask2former-swin-small-coco-instance",
+    "base": "facebook/mask2former-swin-base-coco-instance",
+    "base-in21k": "facebook/mask2former-swin-base-IN21k-coco-instance",
+    "large": "facebook/mask2former-swin-large-coco-instance",
 }
 
 
@@ -22,14 +25,16 @@ def build(
     no_object_weight: float = 0.1,
     dice_weight: float = 5.0,
     mask_weight: float = 5.0,
+    grad_checkpoint: bool = False,
 ):
     """Собирает процессор и модель Mask2Former для сегментации филаментов.
     params:
         size: сторона входных квадратных изображений
-        backbone: ключ чекпоинта (tiny или small)
+        backbone: ключ чекпоинта (tiny, small, base, base-in21k или large)
         no_object_weight: вес класса «нет объекта»
         dice_weight: вес Dice-лосса
         mask_weight: вес mask-лосса
+        grad_checkpoint: включить gradient checkpointing (экономия памяти ценой скорости)
     returns:
         кортеж из процессора и модели
     """
@@ -50,6 +55,8 @@ def build(
     model = Mask2FormerForUniversalSegmentation.from_pretrained(
         ckpt, config=model_cfg, ignore_mismatched_sizes=True
     )
+    if grad_checkpoint:
+        model.gradient_checkpointing_enable()
     return processor, model
 
 
@@ -76,6 +83,7 @@ def load_checkpoint(weights: Path | None = None):
         no_object_weight=float(checkpoint.get("no_object_weight", 0.1)),
         dice_weight=float(checkpoint.get("dice_weight", 5.0)),
         mask_weight=float(checkpoint.get("mask_weight", 5.0)),
+        grad_checkpoint=bool(checkpoint.get("grad_checkpoint", False)),
     )
     model.load_state_dict(checkpoint["model"], strict=False)
     model.to(device).eval()

@@ -148,6 +148,7 @@ def log_train(
     backbone_lr_mult: float = BACKBONE_LR_MULT,
     grad_clip_norm: float = GRAD_CLIP_NORM,
     ema_decay: float = EMA_DECAY,
+    grad_checkpoint: bool = False,
 ) -> dict:
     """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub.
     params:
@@ -161,7 +162,7 @@ def log_train(
         eval_train_samples: число случайных изображений для train PQ (0 — не считать)
         run_name: имя MLflow run на DagsHub
         augment: геометрические аугментации
-        backbone: tiny или small
+        backbone: tiny, small, base, base-in21k или large
         object_crop_prob: доля кропов вокруг филамента
         negative_crop_prob: доля пустых кропов
         full_image_epochs: сколько последних эпох учить на полном диске
@@ -173,6 +174,7 @@ def log_train(
         backbone_lr_mult: множитель lr для энкодера
         grad_clip_norm: предел нормы градиента перед шагом оптимизатора
         ema_decay: коэффициент затухания EMA
+        grad_checkpoint: gradient checkpointing для экономии памяти
     returns:
         словарь с историей train_loss, train_pq и val_pq по эпохам
     """
@@ -187,6 +189,7 @@ def log_train(
         no_object_weight=no_object_weight,
         dice_weight=dice_weight,
         mask_weight=mask_weight,
+        grad_checkpoint=grad_checkpoint,
     )
     model.to(device).train()
     data = Magfilo(
@@ -249,6 +252,7 @@ def log_train(
         "augment": augment,
         "ema_decay": ema_decay,
         "grad_clip_norm": grad_clip_norm,
+        "grad_checkpoint": grad_checkpoint,
     }
     metrics_rows: list[dict] = []
     best_pq = -1.0
@@ -443,6 +447,7 @@ def train(
     backbone_lr_mult: float = BACKBONE_LR_MULT,
     grad_clip_norm: float = GRAD_CLIP_NORM,
     ema_decay: float = EMA_DECAY,
+    grad_checkpoint: bool = False,
 ) -> Path:
     """Обучает Mask2Former на MAGFiLO через log_train и возвращает путь к last.pt.
     params:
@@ -473,6 +478,7 @@ def train(
         backbone_lr_mult=backbone_lr_mult,
         grad_clip_norm=grad_clip_norm,
         ema_decay=ema_decay,
+        grad_checkpoint=grad_checkpoint,
     )
     return config.models_path / "last.pt"
 
@@ -492,6 +498,7 @@ def cmd_train(
     backbone_lr_mult: float = BACKBONE_LR_MULT,
     grad_clip_norm: float = GRAD_CLIP_NORM,
     ema_decay: float = EMA_DECAY,
+    grad_checkpoint: bool = False,
 ) -> None:
     """Запускает обучение Mask2Former; в smoke-режиме — 1 эпоха и до 30 шагов.
     params:
@@ -501,7 +508,7 @@ def cmd_train(
         eval_val_samples: сколько val-картинок для PQ после эпохи (0 — все)
         eval_train_samples: сколько train-картинок для PQ (0 — не считать)
         run_name: имя run на DagsHub
-        backbone: tiny или small
+        backbone: tiny, small, base, base-in21k или large
         full_image_epochs: сколько последних эпох на полном диске
         warmup_epochs: эпохи разогрева lr
         lr: скорость обучения
@@ -509,6 +516,7 @@ def cmd_train(
         backbone_lr_mult: множитель lr энкодера
         grad_clip_norm: предел нормы градиента
         ema_decay: коэффициент затухания EMA
+        grad_checkpoint: gradient checkpointing для экономии памяти
     """
     max_steps = MAX_STEPS
     if smoke:
@@ -535,4 +543,5 @@ def cmd_train(
         backbone_lr_mult=backbone_lr_mult,
         grad_clip_norm=grad_clip_norm,
         ema_decay=ema_decay,
+        grad_checkpoint=grad_checkpoint,
     )

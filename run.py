@@ -38,6 +38,7 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
             args.backbone_lr_mult,
             args.grad_clip_norm,
             args.ema_decay,
+            args.grad_checkpoint,
         )
     elif args.cmd == "infer":
         cmd_infer(
