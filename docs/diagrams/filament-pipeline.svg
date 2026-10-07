@@ -1,91 +1,71 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" font-family="Inter, Arial, sans-serif">
-  <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="#222"/>
-    </marker>
-  </defs>
-  <rect width="1200" height="520" fill="#fafafa"/>
-  <text x="24" y="36" font-size="18" font-weight="600" fill="#111">Filament Segmentation 2026  AE5<0 ?@>5:B0 (>:BO1@L)</text>
-  <text x="24" y="58" font-size="12" fill="#555">PQ = 4><0H=OO <5B@8:0 =0 val, 5A;8 =5 C:070=> «LB». !B@5;:8 = ?>@O4>: M:A?5@8<5=B>2, =5 >1O70B5;L=> :>4 2 runtime.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520">
+  <rect width="1200" height="520" fill="#ffffff"/>
+  <text x="24" y="32" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">Filament 2026 — schema proekta</text>
+  <text x="24" y="52" font-family="Arial, sans-serif" font-size="11" fill="#444444">PQ home = nasha proverka; PQ LB = leaderboard. Strelki = poryadok raboty.</text>
 
-  <!-- row 1: data -->
-  <rect x="40" y="100" width="200" height="88" rx="6" fill="#e8f4fc" stroke="#222" stroke-width="1.2"/>
-  <text x="56" y="128" font-size="13" font-weight="600">0==K5</text>
-  <text x="56" y="148" font-size="11">Kaggle: filament-segmentation-2026</text>
-  <text x="56" y="164" font-size="11">GONG H±, :04@K 2048×2048</text>
-  <text x="56" y="180" font-size="11">val: 387 87>1@065=89</text>
+  <rect x="40" y="90" width="200" height="80" fill="#e8f4fc" stroke="#000000" stroke-width="1"/>
+  <text x="52" y="112" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Dannye</text>
+  <text x="52" y="130" font-family="Arial, sans-serif" font-size="10">Kaggle filament-2026</text>
+  <text x="52" y="146" font-family="Arial, sans-serif" font-size="10">GONG H-alpha 2048</text>
+  <text x="52" y="162" font-family="Arial, sans-serif" font-size="10">val: 387 kadrov</text>
 
-  <line x1="240" y1="144" x2="280" y2="144" stroke="#222" marker-end="url(#arrow)"/>
+  <line x1="240" y1="130" x2="275" y2="130" stroke="#000000" stroke-width="1"/>
+  <polygon points="275,130 268,126 268,134" fill="#000000"/>
 
-  <!-- baseline -->
-  <rect x="280" y="100" width="180" height="88" rx="6" fill="#f0f0f0" stroke="#222" stroke-width="1.2"/>
-  <text x="296" y="128" font-size="13" font-weight="600">Baseline Otsu</text>
-  <text x="296" y="148" font-size="11">run.py baseline</text>
-  <text x="296" y="164" font-size="11">B>G:0 >BAGQB0, 157 DL</text>
+  <rect x="280" y="90" width="170" height="80" fill="#f0f0f0" stroke="#000000" stroke-width="1"/>
+  <text x="292" y="112" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Baseline Otsu</text>
+  <text x="292" y="130" font-family="Arial, sans-serif" font-size="10">run.py baseline</text>
+  <text x="292" y="146" font-family="Arial, sans-serif" font-size="10">tochka otscheta</text>
 
-  <line x1="460" y1="144" x2="500" y2="144" stroke="#222" marker-end="url(#arrow)"/>
+  <line x1="450" y1="130" x2="490" y2="130" stroke="#000000" stroke-width="1"/>
+  <polygon points="490,130 483,126 483,134" fill="#000000"/>
 
-  <!-- fork label -->
-  <text x="500" y="90" font-size="11" fill="#666">420 ?0@0;;5;L=KE B@5:0 2 :><0=45</text>
+  <line x1="490" y1="130" x2="530" y2="95" stroke="#000000" stroke-width="1"/>
+  <polygon points="530,95 523,99 527,102" fill="#000000"/>
+  <rect x="530" y="68" width="210" height="88" fill="#fff3e6" stroke="#000000" stroke-width="1"/>
+  <text x="542" y="90" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Mask2Former (Matvey)</text>
+  <text x="542" y="108" font-family="Arial, sans-serif" font-size="10">feature/optimization</text>
+  <text x="542" y="124" font-family="Arial, sans-serif" font-size="10">PQ home ~0.27</text>
+  <text x="542" y="140" font-family="Arial, sans-serif" font-size="10">zapasnoj trek</text>
 
-  <!-- M2F branch upper -->
-  <line x1="500" y1="144" x2="540" y2="100" stroke="#222" marker-end="url(#arrow)"/>
-  <rect x="540" y="72" width="220" height="96" rx="6" fill="#fff3e6" stroke="#222" stroke-width="1.2"/>
-  <text x="556" y="98" font-size="13" font-weight="600">Mask2Former (0B259)</text>
-  <text x="556" y="118" font-size="11">25B:0: feature/optimization</text>
-  <text x="556" y="134" font-size="11">PQ ~0.27 (1024, 8 ep)</text>
-  <text x="556" y="150" font-size="11">SAHI/TTA 2 @01>B5</text>
-  <text x="556" y="166" font-size="10" fill="#666">@>;L: 70?0A=>9 / ensemble</text>
+  <line x1="490" y1="130" x2="530" y2="175" stroke="#000000" stroke-width="1"/>
+  <polygon points="530,175 523,171 527,168" fill="#000000"/>
+  <rect x="530" y="155" width="210" height="95" fill="#e8f8ec" stroke="#000000" stroke-width="1"/>
+  <text x="542" y="177" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Mask R-CNN v1 (Dasha)</text>
+  <text x="542" y="195" font-family="Arial, sans-serif" font-size="10">1024, 20 ep</text>
+  <text x="542" y="211" font-family="Arial, sans-serif" font-size="10">home PQ 0.345</text>
+  <text x="542" y="227" font-family="Arial, sans-serif" font-size="10">LB PQ 0.28 (overlap)</text>
 
-  <!-- MRCNN v1 main lower -->
-  <line x1="500" y1="144" x2="540" y2="188" stroke="#222" marker-end="url(#arrow)"/>
-  <rect x="540" y="160" width="220" height="104" rx="6" fill="#e8f8ec" stroke="#222" stroke-width="1.2"/>
-  <text x="556" y="186" font-size="13" font-weight="600">Mask R-CNN v1 (0H0)</text>
-  <text x="556" y="206" font-size="11">ResNet50, 1024, 20 ep</text>
-  <text x="556" y="222" font-size="11">home PQ 0.345 (387 val)</text>
-  <text x="556" y="238" font-size="11">LB PQ 0.28 (noolap submit)</text>
-  <text x="556" y="254" font-size="10" fill="#666">LB =865: ?5@5A5:0NI85AO <0A:8</text>
+  <line x1="740" y1="200" x2="780" y2="200" stroke="#000000" stroke-width="1"/>
+  <polygon points="780,200 773,196 773,204" fill="#000000"/>
+  <rect x="780" y="155" width="230" height="95" fill="#ede8fc" stroke="#000000" stroke-width="1"/>
+  <text x="792" y="177" font-family="Arial, sans-serif" font-size="12" font-weight="bold">Mask R-CNN v2 (Dasha)</text>
+  <text x="792" y="195" font-family="Arial, sans-serif" font-size="10">1280, 30 ep, best.pt OK</text>
+  <text x="792" y="211" font-family="Arial, sans-serif" font-size="10">probe PQ ~0.40 (50 val)</text>
+  <text x="792" y="227" font-family="Arial, sans-serif" font-size="10">full val + submit — net</text>
 
-  <line x1="760" y1="212" x2="800" y2="212" stroke="#222" marker-end="url(#arrow)"/>
+  <line x1="1010" y1="200" x2="1050" y2="200" stroke="#000000" stroke-width="1"/>
+  <polygon points="1050,200 1043,196 1043,204" fill="#000000"/>
+  <rect x="1050" y="165" width="110" height="75" fill="#fff9e6" stroke="#000000" stroke-width="1"/>
+  <text x="1062" y="187" font-family="Arial, sans-serif" font-size="11" font-weight="bold">Dalsche</text>
+  <text x="1062" y="205" font-family="Arial, sans-serif" font-size="10">val 387</text>
+  <text x="1062" y="220" font-family="Arial, sans-serif" font-size="10">submit</text>
+  <text x="1062" y="235" font-family="Arial, sans-serif" font-size="10">sweep</text>
 
-  <!-- v2 -->
-  <rect x="800" y="160" width="240" height="104" rx="6" fill="#ede8fc" stroke="#222" stroke-width="1.2"/>
-  <text x="816" y="186" font-size="13" font-weight="600">Mask R-CNN v2 (0H0)</text>
-  <text x="816" y="206" font-size="11">GN, anchors, 1280, 30 ep</text>
-  <text x="816" y="222" font-size="11">probe PQ ~0.40 (50 val / ep)</text>
-  <text x="816" y="238" font-size="11">best.pt 5ABL, train OK</text>
-  <text x="816" y="254" font-size="10" fill="#666">full 387 val + submit  =5B</text>
+  <text x="40" y="290" font-family="Arial, sans-serif" font-size="13" font-weight="bold">Gde chto lezhit</text>
+  <rect x="40" y="305" width="350" height="65" fill="#ffffff" stroke="#666666" stroke-width="1"/>
+  <text x="52" y="325" font-family="Arial, sans-serif" font-size="11" font-weight="bold">GitHub</text>
+  <text x="52" y="342" font-family="Arial, sans-serif" font-size="10">d1maal/filament-segmentation-2026</text>
+  <text x="52" y="358" font-family="Arial, sans-serif" font-size="10">vetka feature/mask-rcnn</text>
 
-  <line x1="1040" y1="212" x2="1080" y2="212" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="410" y="305" width="350" height="65" fill="#ffffff" stroke="#666666" stroke-width="1"/>
+  <text x="422" y="325" font-family="Arial, sans-serif" font-size="11" font-weight="bold">Kaggle</text>
+  <text x="422" y="342" font-family="Arial, sans-serif" font-size="10">kernel mask-rcnn-v2</text>
+  <text x="422" y="358" font-family="Arial, sans-serif" font-size="10">best.pt, train_log.csv</text>
 
-  <!-- next -->
-  <rect x="1080" y="168" width="100" height="88" rx="6" fill="#fff9e6" stroke="#222" stroke-width="1.2"/>
-  <text x="1094" y="194" font-size="12" font-weight="600">0;LH5</text>
-  <text x="1094" y="212" font-size="10">val 387</text>
-  <text x="1094" y="226" font-size="10">submit</text>
-  <text x="1094" y="240" font-size="10">sweep</text>
-
-  <!-- row 2: infra boxes -->
-  <text x="40" y="310" font-size="14" font-weight="600">45 GB> ;568B (=5 ?CB0BL)</text>
-
-  <rect x="40" y="330" width="360" height="72" rx="6" fill="#fff" stroke="#888" stroke-width="1"/>
-  <text x="56" y="352" font-size="12" font-weight="600">GitHub</text>
-  <text x="56" y="370" font-size="11">d1maal/filament-segmentation-2026</text>
-  <text x="56" y="386" font-size="11">mainline :>4: feature/mask-rcnn ’ src/models/mask_rcnn/</text>
-
-  <rect x="420" y="330" width="360" height="72" rx="6" fill="#fff" stroke="#888" stroke-width="1"/>
-  <text x="436" y="352" font-size="12" font-weight="600">Kaggle</text>
-  <text x="436" y="370" font-size="11">kernel train: dm1triyaleksandrov/mask-rcnn-v2</text>
-  <text x="436" y="386" font-size="11">output: outputs/mask_rcnn/best.pt, train_log.csv</text>
-
-  <rect x="800" y="330" width="360" height="72" rx="6" fill="#fff" stroke="#888" stroke-width="1"/>
-  <text x="816" y="352" font-size="12" font-weight="600">DagsHub</text>
-  <text x="816" y="370" font-size="11">5ABL sweep v1 (postprocess), train v2 =5 ;>38@>20;8</text>
-  <text x="816" y="386" font-size="11"><5B@8:8 v2: train_log.csv ;>:0;L=> / output</text>
-
-  <!-- row 3: decision -->
-  <rect x="40" y="430" width="1120" height="64" rx="6" fill="#f5f5f5" stroke="#222" stroke-width="1"/>
-  <text x="56" y="454" font-size="12" font-weight="600"> 5H5=85 :><0=4K</text>
-  <text x="56" y="474" font-size="11">5 <5=OBL 0@E8B5:BC@C :064CN =545;N. Mainline = Mask R-CNN. >:@CG8205< infer/submit ’ postprocess ’ ?@8 ?;0B> cascade 2=CB@8 B>9 65 A5<L8.</text>
+  <rect x="780" y="305" width="380" height="65" fill="#ffffff" stroke="#666666" stroke-width="1"/>
+  <text x="792" y="325" font-family="Arial, sans-serif" font-size="11" font-weight="bold">Reshenie</text>
+  <text x="792" y="342" font-family="Arial, sans-serif" font-size="10">Mainline = Mask R-CNN, ne novaya arhitektura</text>
+  <text x="792" y="358" font-family="Arial, sans-serif" font-size="10">Dokruchivaem infer, submit, postprocess</text>
 </svg>
