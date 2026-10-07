@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from src.eval import cmd_baseline, cmd_check, cmd_infer, cmd_sweep
+from src.eval.evaluate import cmd_baseline, cmd_check, cmd_infer, cmd_sweep
 from src.models.m2f import build_parser, cmd_train
 
 
