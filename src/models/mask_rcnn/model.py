@@ -9,6 +9,7 @@ from torchvision.models.detection.rpn import AnchorGenerator, RPNHead
 from torchvision.ops import MultiScaleRoIAlign
 
 from .config import config
+from .losses import install_mask_loss
 
 
 def _anchor_generator(ratios=None):
@@ -38,7 +39,7 @@ def _build_v1(size: int):
     )
 
 
-def _build_v2(size: int):
+def _backbone():
     norm_layer = partial(nn.GroupNorm, 32)
     backbone = resnet_fpn_backbone(
         backbone_name="resnet50",
@@ -46,6 +47,11 @@ def _build_v2(size: int):
         norm_layer=norm_layer,
         trainable_layers=5,
     )
+    return backbone, norm_layer
+
+
+def _build_v2(size: int):
+    backbone, norm_layer = _backbone()
     anchors = _anchor_generator()
     rpn_head = RPNHead(
         backbone.out_channels,
@@ -65,7 +71,7 @@ def _build_v2(size: int):
     )
     mask_roi_pool = MultiScaleRoIAlign(
         featmap_names=["0", "1", "2", "3"],
-        output_size=config.mask_roi_size,
+        output_size=28,
         sampling_ratio=2,
     )
     mask_head = MaskRCNNHeads(
@@ -98,6 +104,64 @@ def _build_v2(size: int):
     )
 
 
+def _build_v3(size: int):
+    install_mask_loss()
+    backbone, norm_layer = _backbone()
+    anchors = _anchor_generator()
+    rpn_head = RPNHead(
+        backbone.out_channels,
+        anchors.num_anchors_per_location()[0],
+        conv_depth=2,
+    )
+    box_roi_pool = MultiScaleRoIAlign(
+        featmap_names=["0", "1", "2", "3"],
+        output_size=7,
+        sampling_ratio=2,
+    )
+    box_head = FastRCNNConvFCHead(
+        (backbone.out_channels, 7, 7),
+        [256, 256, 256, 256],
+        [1024],
+        norm_layer=norm_layer,
+    )
+    mask_roi_pool = MultiScaleRoIAlign(
+        featmap_names=["0", "1", "2", "3"],
+        output_size=config.mask_roi_size,
+        sampling_ratio=2,
+    )
+    mask_head = MaskRCNNHeads(
+        backbone.out_channels,
+        [256] * int(config.mask_head_depth),
+        1,
+        norm_layer=norm_layer,
+    )
+    return MaskRCNN(
+        backbone,
+        num_classes=config.num_classes,
+        min_size=size,
+        max_size=size,
+        image_mean=[0.5, 0.5, 0.5],
+        image_std=[0.25, 0.25, 0.25],
+        rpn_anchor_generator=anchors,
+        rpn_head=rpn_head,
+        rpn_pre_nms_top_n_train=config.rpn_pre_nms_top_n_train,
+        rpn_pre_nms_top_n_test=config.rpn_pre_nms_top_n_test,
+        rpn_post_nms_top_n_train=config.rpn_post_nms_top_n_train,
+        rpn_post_nms_top_n_test=config.rpn_post_nms_top_n_test,
+        rpn_nms_thresh=config.rpn_nms_thresh,
+        box_roi_pool=box_roi_pool,
+        box_head=box_head,
+        box_score_thresh=0.05,
+        box_nms_thresh=config.box_nms_thresh,
+        box_detections_per_img=config.max_detections,
+        box_fg_iou_thresh=config.box_fg_iou_thresh,
+        box_bg_iou_thresh=config.box_bg_iou_thresh,
+        box_positive_fraction=config.box_positive_fraction,
+        mask_roi_pool=mask_roi_pool,
+        mask_head=mask_head,
+    )
+
+
 def build_model(image_size: int | None = None, architecture: str | None = None):
     size = int(image_size or config.image_size)
     architecture = architecture or config.architecture
@@ -105,4 +169,6 @@ def build_model(image_size: int | None = None, architecture: str | None = None):
         return _build_v1(size)
     if architecture == "v2":
         return _build_v2(size)
+    if architecture == "v3":
+        return _build_v3(size)
     raise ValueError(f"Unknown Mask R-CNN architecture: {architecture}")
