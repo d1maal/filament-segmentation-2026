@@ -28,12 +28,15 @@ def init_dagshub() -> bool:
         return False
 
 
-def _log_training_artifacts(model, ckpt: Path, history: dict) -> None:
+def _log_training_artifacts(
+    model, ckpt: Path, history: dict, model_name: str = "mask2former_model"
+) -> None:
     """Сохраняет в активный MLflow-ран графики обучения, модель и чекпоинт.
     params:
-        model: обученная модель Mask2Former
+        model: обученная модель
         ckpt: путь к чекпоинту last.pt
         history: словарь с историей train_loss, val_pq и train_pq по эпохам
+        model_name: имя артефакта модели в MLflow
     """
     try:
         fig, ax = plt.subplots(figsize=(8, 5))
@@ -54,7 +57,7 @@ def _log_training_artifacts(model, ckpt: Path, history: dict) -> None:
         fig.tight_layout()
         mlflow.log_figure(fig, "training_curves.png")
         plt.close(fig)
-        mlflow.pytorch.log_model(model, "mask2former_model", serialization_format="pt2")
+        mlflow.pytorch.log_model(model, model_name, serialization_format="pt2")
     except Exception as exc:
         print(f"WARNING: MLflow artifacts failed, ckpt still logged: {exc}")
     mlflow.log_artifact(str(ckpt))
