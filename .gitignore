@@ -11,9 +11,3 @@ outputs/
 *.pt
 *.pth
 wandb/
-
-# Special folders
-/splits
-
-# Special files
-*.lock
