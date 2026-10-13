@@ -22,6 +22,15 @@ python run.py train --size 1024 --epochs 8 --run-name test_run --eval-samples-va
 python run.py infer --submit
 ```
 
+Swin pipeline:
+
+```bash
+python run.py mask_dino_swin train --smoke       # 30 steps, Kaggle GPU
+python run.py mask_dino_swin train --size 512 --epochs 8 --run-name mask_dino_swin_t
+python run.py mask_dino_swin infer --submit
+python run.py mask_dino_swin sweep
+```
+
 On Kaggle: GPU notebook, Add Data = this competition, clone or zip-upload this repo (no `.venv`), import `notebooks/kaggle_mask2former.ipynb`. Paste errors back here.
 
 Home PQ: match instances at IoU ≥ 0.5, then `sum(IoU) / (TP + 0.5 FP + 0.5 FN)`. Val is whole images.
