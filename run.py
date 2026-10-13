@@ -54,7 +54,9 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
             args.limit,
         )
     elif args.cmd == "sweep":
-        cmd_sweep(args.weights, args.score_thrs, args.min_areas, args.limit, not args.no_log)
+        cmd_sweep(
+            args.weights, args.score_thrs, args.min_areas, args.limit, not args.no_log
+        )
     else:
         p.error(f"unknown command: {args.cmd}")
 
@@ -80,6 +82,15 @@ def run_mask_dino_swin_cli(argv: list[str] | None = None) -> None:
             args.lr,
             args.warmup_epochs,
             args.backbone_lr_mult,
+            args.eval_score_thr,
+            args.dec_layers,
+            args.mask_dim,
+            args.two_stage,
+            args.dn,
+            args.dn_num,
+            args.noise_scale,
+            args.box_loss,
+            args.deep_supervision,
         )
     elif args.cmd == "infer":
         cmd_mask_dino_swin_infer(

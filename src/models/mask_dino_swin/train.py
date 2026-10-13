@@ -1,4 +1,5 @@
 """Обучение Swin-модели с валидацией Home PQ и MLflow-трекингом."""
+
 from __future__ import annotations
 
 import csv
@@ -23,53 +24,65 @@ from src.data import (
 from src.eval.val_items import _val_items
 from src.metrics import aggregate, panoptic_quality
 from src.models.m2f.dataset import DATA_SEED, Magfilo
-from src.models.mask_dino_swin.build import CHECKPOINTS, OUT_DIR, build
+from src.models.mask_dino_swin.build import CHECKPOINTS, OUT_DIR, build, build_criterion
 from src.models.mask_dino_swin.dataset import collate
-from src.models.mask_dino_swin.inference import predict_masks
-from src.models.mask_dino_swin.model import match_and_loss
+from src.models.mask_dino_swin.inference import _predict_scored
 from src.tracking.dagshub import _log_training_artifacts, init_dagshub
 
 MAX_STEPS = 0
+EVAL_FORWARD_SIZE = 2048
+EVAL_MIN_AREA = 80
 
 
 @torch.no_grad()
-def _eval_val(model, device, forward_size: int, eval_samples: int = 0) -> float:
+def _eval_val(
+    model, device, forward_size: int, score_thr: float, eval_samples: int = 0
+) -> tuple[float, float]:
     """Считает Home PQ модели на валидационных изображениях.
     params:
         model: обученная модель SwinMaskDINO
         device: устройство выполнения вычислений
-        forward_size: сторона входа сети при инференсе
+        forward_size: сторона входа сети при инференсе (2048 — полный диск)
+        score_thr: порог скора для валидации
         eval_samples: число случайных изображений для оценки (0 — все)
     returns:
-        агрегированный PQ по валидации (0, если нет изображений)
+        кортеж (агрегированный PQ, максимальный скор queries)
     """
     items = _val_items()
     if eval_samples and len(items) > eval_samples:
         items = random.Random(DATA_SEED).sample(items, eval_samples)
     rows = []
+    max_score = 0.0
     for coco, info, path in tqdm(items, desc="eval val PQ"):
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
-        pred = predict_masks(model, device, img, forward_size=forward_size)
+        scored = _predict_scored(model, device, img, 0.0, 0, forward_size)
+        max_score = max([max_score] + [score for _, score in scored])
+        pred = [
+            mask
+            for mask, score in scored
+            if score >= score_thr and int(mask.sum()) >= EVAL_MIN_AREA
+        ]
         rows.append(panoptic_quality(instances_for_image(coco, info["id"]), pred))
     if not rows:
-        return 0.0
-    return float(aggregate(rows)["pq"])
+        return 0.0, max_score
+    return float(aggregate(rows)["pq"]), max_score
 
 
 @torch.no_grad()
 def _eval_train(
-    model, device, forward_size: int, eval_samples: int = 0
-) -> float:
+    model, device, forward_size: int, score_thr: float, eval_samples: int = 0
+) -> tuple[float, float]:
     """Считает Home PQ модели на тренировочных изображениях.
     params:
         model: обученная модель SwinMaskDINO
         device: устройство выполнения вычислений
-        forward_size: сторона входа сети при инференсе
+        forward_size: сторона входа сети при инференсе (2048 — полный диск)
+        score_thr: порог скора для валидации
         eval_samples: число случайных изображений для оценки (0 — не считать)
     returns:
-        агрегированный PQ по трейну (0, если нет изображений)
+        кортеж (агрегированный PQ, максимальный скор queries)
     """
     coco = load_coco()
     val = ensure_val_split(coco)
@@ -83,15 +96,22 @@ def _eval_train(
     if eval_samples and len(items) > eval_samples:
         items = random.Random(DATA_SEED).sample(items, eval_samples)
     rows = []
+    max_score = 0.0
     for coco, info, path in tqdm(items, desc="eval train PQ"):
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
-        pred = predict_masks(model, device, img, forward_size=forward_size)
+        scored = _predict_scored(model, device, img, 0.0, 0, forward_size)
+        max_score = max([max_score] + [score for _, score in scored])
+        pred = [
+            mask
+            for mask, score in scored
+            if score >= score_thr and int(mask.sum()) >= EVAL_MIN_AREA
+        ]
         rows.append(panoptic_quality(instances_for_image(coco, info["id"]), pred))
     if not rows:
-        return 0.0
-    return float(aggregate(rows)["pq"])
+        return 0.0, max_score
+    return float(aggregate(rows)["pq"]), max_score
 
 
 def _make_scheduler(optimizer, updates_per_epoch: int, epochs: int, warmup_epochs: int):
@@ -133,12 +153,21 @@ def log_train(
     num_queries: int = 100,
     hidden_dim: int = 256,
     dec_layers: int = 3,
+    mask_dim: int = 128,
+    two_stage: bool = False,
+    dn: str = "no",
+    dn_num: int = 100,
+    noise_scale: float = 0.4,
+    box_loss: bool = True,
+    deep_supervision: bool = True,
     object_crop_prob: float = 0.7,
     negative_crop_prob: float = 0.1,
     warmup_epochs: int = 2,
     backbone_lr_mult: float = 0.1,
+    eval_score_thr: float = 0.1,
 ) -> dict:
     """Обучает SwinMaskDINO на MAGFiLO и логирует эксперимент в DagsHub.
+
     params:
         size: сторона кропа при обучении (кратна 32)
         epochs: число эпох
@@ -154,12 +183,20 @@ def log_train(
         num_queries: число queries
         hidden_dim: ширина трансформера
         dec_layers: число слоёв декодера
+        mask_dim: ширина mask-фичей FPN
+        two_stage: two-stage выбор queries
+        dn: режим denoising ("no" или "seg")
+        dn_num: число DN-запросов
+        noise_scale: масштаб шума боксов DN
+        box_loss: включать боксовые лоссы
+        deep_supervision: aux-лоссы по слоям декодера
         object_crop_prob: доля кропов вокруг филамента
         negative_crop_prob: доля пустых кропов
         warmup_epochs: эпохи линейного разогрева lr
         backbone_lr_mult: множитель lr для энкодера
+        eval_score_thr: порог скора для PQ при обучении (ниже инференса, чтобы видеть ранний сигнал)
     returns:
-        словарь с историей train_loss, train_pq и val_pq по эпохам
+        словарь с историей train_loss, train_pq, val_pq и max_score по эпохам
     """
     if not config.train_annotations.exists():
         raise SystemExit(
@@ -172,8 +209,17 @@ def log_train(
         num_queries=num_queries,
         hidden_dim=hidden_dim,
         dec_layers=dec_layers,
+        mask_dim=mask_dim,
+        two_stage=two_stage,
+        dn=dn,
+        dn_num=dn_num,
+        noise_scale=noise_scale,
+        deep_supervision=deep_supervision,
     )
     model.to(device).train()
+    criterion = build_criterion(
+        box_loss=box_loss, dn=dn, dec_layers=dec_layers, two_stage=two_stage
+    ).to(device)
     data = Magfilo(
         size=size,
         object_crop_prob=object_crop_prob,
@@ -218,6 +264,13 @@ def log_train(
         "num_queries": num_queries,
         "hidden_dim": hidden_dim,
         "dec_layers": dec_layers,
+        "mask_dim": mask_dim,
+        "two_stage": two_stage,
+        "dn": dn,
+        "dn_num": dn_num,
+        "noise_scale": noise_scale,
+        "box_loss": box_loss,
+        "deep_supervision": deep_supervision,
         "object_crop_prob": object_crop_prob,
         "negative_crop_prob": negative_crop_prob,
         "warmup_epochs": warmup_epochs,
@@ -227,7 +280,7 @@ def log_train(
     }
     metrics_rows: list[dict] = []
     best_pq = -1.0
-    history: dict = {"train_loss": [], "val_pq": [], "train_pq": []}
+    history: dict = {"train_loss": [], "val_pq": [], "train_pq": [], "max_score": []}
     run = None
     if init_dagshub():
         try:
@@ -243,7 +296,7 @@ def log_train(
                     **extra,
                 }
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — continue training without MLflow logging
             print(f"WARNING: MLflow run init failed, continuing without logging: {exc}")
             run = None
     step_i = 0
@@ -252,10 +305,19 @@ def log_train(
         running, seen, step = 0.0, 0, 0
         opt.zero_grad()
         for step, batch in enumerate(tqdm(loader, desc=f"epoch {epoch}"), start=1):
+            pixels = batch["pixel_values"].to(device)
+            targets = [
+                {"labels": l.to(device), "boxes": bx.to(device), "masks": m.to(device)}
+                for l, bx, m in zip(
+                    batch["class_labels"], batch["box_labels"], batch["mask_labels"]
+                )
+            ]
             with autocast():
-                outputs = model(batch["pixel_values"].to(device))
-                gt = batch["mask_labels"][0].to(device)
-                loss, _ = match_and_loss(outputs["pred_logits"][0], outputs["pred_masks"][0], gt)
+                outputs = model(pixels, targets)
+                losses = criterion(outputs, targets)
+                loss = sum(
+                    criterion.weight_dict.get(k, 1.0) * losses[k] for k in losses
+                )
                 loss = loss / accum
             scaler.scale(loss).backward()
             if step % accum == 0:
@@ -279,32 +341,47 @@ def log_train(
         avg_loss = running / max(seen, 1)
         history["train_loss"].append(avg_loss)
         model.eval()
-        val_pq = _eval_val(model, device, size, eval_val_samples)
-        train_pq = (
-            _eval_train(model, device, size, eval_train_samples) if eval_train_samples else None
+        val_pq, val_max = _eval_val(
+            model, device, EVAL_FORWARD_SIZE, eval_score_thr, eval_val_samples
         )
+        if eval_train_samples:
+            train_pq, train_max = _eval_train(
+                model, device, EVAL_FORWARD_SIZE, eval_score_thr, eval_train_samples
+            )
+        else:
+            train_pq, train_max = None, val_max
         model.train()
+        epoch_max = max(val_max, train_max)
         history["val_pq"].append(val_pq)
         history["train_pq"].append(train_pq)
+        history["max_score"].append(epoch_max)
         if run is not None:
-            metrics = {"train_loss": avg_loss, "val_pq": val_pq}
+            metrics = {"train_loss": avg_loss, "val_pq": val_pq, "max_score": epoch_max}
             if train_pq is not None:
                 metrics["train_pq"] = train_pq
             mlflow.log_metrics(metrics, step=epoch)
         metrics_rows.append(
-            {"epoch": epoch, "train_loss": avg_loss, "train_pq": train_pq, "val_pq": val_pq}
+            {
+                "epoch": epoch,
+                "train_loss": avg_loss,
+                "train_pq": train_pq,
+                "val_pq": val_pq,
+                "max_score": epoch_max,
+            }
         )
         if val_pq > best_pq:
             best_pq = val_pq
             torch.save(bundle, run_dir / "best.pt")
         print(
-            f"epoch {epoch} loss={avg_loss:.4f} val_pq={val_pq:.4f} "
+            f"epoch {epoch} loss={avg_loss:.4f} val_pq={val_pq:.4f} max_score={epoch_max:.4f} "
             f"lr={opt.param_groups[1]['lr']:.2e} -> {ckpt}"
         )
         if max_steps and step_i >= max_steps:
             break
     with (run_dir / "metrics.csv").open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["epoch", "train_loss", "train_pq", "val_pq"])
+        w = csv.DictWriter(
+            f, fieldnames=["epoch", "train_loss", "train_pq", "val_pq", "max_score"]
+        )
         w.writeheader()
         w.writerows(metrics_rows)
     if run is not None:
@@ -328,12 +405,21 @@ def train(
     num_queries: int = 100,
     hidden_dim: int = 256,
     dec_layers: int = 3,
+    mask_dim: int = 128,
+    two_stage: bool = False,
+    dn: str = "no",
+    dn_num: int = 100,
+    noise_scale: float = 0.4,
+    box_loss: bool = True,
+    deep_supervision: bool = True,
     object_crop_prob: float = 0.7,
     negative_crop_prob: float = 0.1,
     warmup_epochs: int = 2,
     backbone_lr_mult: float = 0.1,
+    eval_score_thr: float = 0.1,
 ) -> Path:
     """Обучает SwinMaskDINO на MAGFiLO через log_train и возвращает путь к last.pt.
+
     params:
         те же, что у log_train
     returns:
@@ -354,10 +440,18 @@ def train(
         num_queries=num_queries,
         hidden_dim=hidden_dim,
         dec_layers=dec_layers,
+        mask_dim=mask_dim,
+        two_stage=two_stage,
+        dn=dn,
+        dn_num=dn_num,
+        noise_scale=noise_scale,
+        box_loss=box_loss,
+        deep_supervision=deep_supervision,
         object_crop_prob=object_crop_prob,
         negative_crop_prob=negative_crop_prob,
         warmup_epochs=warmup_epochs,
         backbone_lr_mult=backbone_lr_mult,
+        eval_score_thr=eval_score_thr,
     )
     return OUT_DIR / "last.pt"
 
@@ -374,8 +468,18 @@ def cmd_train(
     lr: float,
     warmup_epochs: int,
     backbone_lr_mult: float,
+    eval_score_thr: float,
+    dec_layers: int,
+    mask_dim: int,
+    two_stage: bool,
+    dn: str,
+    dn_num: int,
+    noise_scale: float,
+    box_loss: bool,
+    deep_supervision: bool,
 ) -> None:
     """Запускает обучение SwinMaskDINO; в smoke-режиме — 1 эпоха и до 30 шагов.
+
     params:
         smoke: короткий прогон
         size: сторона кропа (кратна 32)
@@ -388,6 +492,15 @@ def cmd_train(
         lr: скорость обучения
         warmup_epochs: эпохи разогрева lr
         backbone_lr_mult: множитель lr энкодера
+        eval_score_thr: порог скора для PQ при обучении
+        dec_layers: число слоёв декодера
+        mask_dim: ширина mask-фичей FPN
+        two_stage: two-stage выбор queries
+        dn: режим denoising
+        dn_num: число DN-запросов
+        noise_scale: масштаб шума боксов DN
+        box_loss: включать боксовые лоссы
+        deep_supervision: aux-лоссы по слоям
     """
     max_steps = MAX_STEPS
     if smoke:
@@ -403,9 +516,18 @@ def cmd_train(
         augment=config.train.augment,
         backbone=backbone,
         num_queries=num_queries,
+        dec_layers=dec_layers,
+        mask_dim=mask_dim,
+        two_stage=two_stage,
+        dn=dn,
+        dn_num=dn_num,
+        noise_scale=noise_scale,
+        box_loss=box_loss,
+        deep_supervision=deep_supervision,
         object_crop_prob=config.train.object_crop_prob,
         negative_crop_prob=config.train.negative_crop_prob,
         warmup_epochs=warmup_epochs,
         lr=lr,
         backbone_lr_mult=backbone_lr_mult,
+        eval_score_thr=eval_score_thr,
     )

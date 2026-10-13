@@ -1,4 +1,5 @@
 """Инференс Swin-модели и команды валидации: infer и sweep."""
+
 from __future__ import annotations
 
 import json
@@ -37,10 +38,12 @@ def _forward(
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape[:2]
     rgb = three_channel(gray)
-    resized = cv2.resize(rgb, (forward_size, forward_size), interpolation=cv2.INTER_LINEAR)
+    resized = cv2.resize(
+        rgb, (forward_size, forward_size), interpolation=cv2.INTER_LINEAR
+    )
     tensor = torch.from_numpy(normalize_image(resized).transpose(2, 0, 1)).unsqueeze(0)
     outputs = model(tensor.to(device))
-    scores = outputs["pred_logits"][0].sigmoid().detach().cpu().numpy()
+    scores = outputs["pred_logits"][0].sigmoid().detach().cpu().numpy().reshape(-1)
     masks = outputs["pred_masks"][0].sigmoid().detach().cpu().numpy()
     full = []
     for mask in masks:
@@ -57,7 +60,7 @@ def _predict_scored(
     image: np.ndarray,
     score_thr: float,
     min_area: int = 0,
-    forward_size: int = 1024,
+    forward_size: int = 2048,
 ) -> list[tuple[np.ndarray, float]]:
     """Инференс одного изображения со скорами.
     params:
@@ -89,7 +92,7 @@ def predict_masks(
     image: np.ndarray,
     score_thr: float = 0.3,
     min_area: int = 80,
-    forward_size: int = 1024,
+    forward_size: int = 2048,
 ) -> list[np.ndarray]:
     """Делает инференс модели на одном полном изображении.
     params:
@@ -104,7 +107,9 @@ def predict_masks(
     """
     return [
         mask
-        for mask, _ in _predict_scored(model, device, image, score_thr, min_area, forward_size)
+        for mask, _ in _predict_scored(
+            model, device, image, score_thr, min_area, forward_size
+        )
     ]
 
 
@@ -115,7 +120,7 @@ def predict_masks_grid(
     image: np.ndarray,
     score_thrs: list[float],
     min_areas: list[int],
-    forward_size: int = 1024,
+    forward_size: int = 2048,
 ) -> dict[tuple[float, int], list[np.ndarray]]:
     """Один forward, несколько порогов score/min_area — для sweep.
     params:
@@ -171,7 +176,7 @@ def cmd_infer(
     score_thr: float,
     min_area: int,
     limit: int,
-    forward_size: int = 1024,
+    forward_size: int = 2048,
 ) -> None:
     """Прогоняет Swin-модель по валидации, считает PQ, опционально пишет submission CSV.
     params:
@@ -225,15 +230,22 @@ def cmd_infer(
     if submit:
         csv_rows = []
         for path in sorted(
-            p for p in config.test_images.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+            p
+            for p in config.test_images.iterdir()
+            if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
         ):
             image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
             if image is None:
                 raise SystemExit(f"Failed to read image: {path}")
-            pred = predict_masks(model, device, image, score_thr, min_area, forward_size)
+            pred = predict_masks(
+                model, device, image, score_thr, min_area, forward_size
+            )
             for i, mask in enumerate(pred, start=1):
                 csv_rows.append(
-                    {"filament_id": f"{path.stem}_{i}", "segmentation_rle": mask_to_rle_counts(mask)}
+                    {
+                        "filament_id": f"{path.stem}_{i}",
+                        "segmentation_rle": mask_to_rle_counts(mask),
+                    }
                 )
         _write_csv(config.outputs_path / "submission_mask_dino_swin.csv", csv_rows)
 
@@ -244,7 +256,7 @@ def cmd_sweep(
     min_areas: list[int],
     limit: int,
     write_log: bool,
-    forward_size: int = 1024,
+    forward_size: int = 2048,
 ) -> None:
     """Сетка score_thr × min_area на одном forward на картинку.
     params:
@@ -262,14 +274,16 @@ def cmd_sweep(
     if limit > 0:
         items = items[:limit]
     settings = [(float(score), int(area)) for score in score_thrs for area in min_areas]
-    rows = {setting: [] for setting in settings}
+    rows: dict[tuple[float, int], list[dict]] = {setting: [] for setting in settings}
     print(f"sweep: {len(items)} images, {len(settings)} settings", flush=True)
     for coco, info, path in tqdm(items, desc="sweep"):
         image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if image is None:
             continue
         gt = instances_for_image(coco, info["id"])
-        preds = predict_masks_grid(model, device, image, score_thrs, min_areas, forward_size)
+        preds = predict_masks_grid(
+            model, device, image, score_thrs, min_areas, forward_size
+        )
         stem = image_stem(info["file_name"])
         for setting, pred in preds.items():
             metrics = panoptic_quality(gt, pred)
@@ -284,7 +298,11 @@ def cmd_sweep(
     (OUT_DIR / "threshold_sweep_mask_dino_swin.json").write_text(
         json.dumps(
             {
-                "config": {"weights": str(weights), "epoch": checkpoint.get("epoch"), "images": len(items)},
+                "config": {
+                    "weights": str(weights),
+                    "epoch": checkpoint.get("epoch"),
+                    "images": len(items),
+                },
                 "results": results,
             },
             indent=2,
@@ -295,8 +313,19 @@ def cmd_sweep(
         OUT_DIR / "threshold_sweep_mask_dino_swin.csv",
         results,
         [
-            "score_thr", "min_area", "pq", "sq", "rq", "precision", "recall",
-            "tp", "fp", "fn", "splits", "merges", "images",
+            "score_thr",
+            "min_area",
+            "pq",
+            "sq",
+            "rq",
+            "precision",
+            "recall",
+            "tp",
+            "fp",
+            "fn",
+            "splits",
+            "merges",
+            "images",
         ],
     )
     print("\nBest settings:")
