@@ -27,7 +27,15 @@ dev = [
     "ruff>=0.1.0",
 ]
 
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "src/models/mask_dino_dtn/maskdino/",
+]
+
 [tool.mypy]
 python_version = "3.13"
 ignore_missing_imports = true
 follow_imports = "skip"
+exclude = ["src/models/mask_dino_dtn/maskdino"]
