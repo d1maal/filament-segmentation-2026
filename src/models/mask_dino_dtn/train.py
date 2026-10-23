@@ -22,9 +22,9 @@ from detectron2.data import (
 from detectron2.engine import DefaultTrainer, HookBase
 from detectron2.projects.deeplab import add_deeplab_config
 from detectron2.utils import comm
+from detectron2.utils.env import seed_all_rng
 from detectron2.utils.events import get_event_storage
 from detectron2.utils.logger import setup_logger
-from detectron2.utils.seed import seed_all_rng
 
 from src.config import config as project_config
 from src.models.mask_dino_dtn.dataset_mapper import MagfiloThreeChannelDatasetMapper
