@@ -58,3 +58,18 @@ def _log_training_artifacts(model, ckpt: Path, history: dict) -> None:
     except Exception as exc:
         print(f"WARNING: MLflow artifacts failed, ckpt still logged: {exc}")
     mlflow.log_artifact(str(ckpt))
+
+
+def log_maskdino_artifacts(output_dir: Path) -> None:
+    """Логирует чекпоинт и метрики MaskDINO (detectron2) в активный MLflow-ран.
+
+    params:
+        output_dir: OUTPUT_DIR detectron2, где лежат model_final.pth и metrics.json
+    """
+    for name in ("model_final.pth", "metrics.json", "last_checkpoint", "config.yaml"):
+        artifact = output_dir / name
+        if artifact.exists():
+            try:
+                mlflow.log_artifact(str(artifact))
+            except Exception as exc:  # noqa: BLE001 — best-effort трекинг
+                print(f"WARNING: MLflow artifact {name} failed: {exc}")

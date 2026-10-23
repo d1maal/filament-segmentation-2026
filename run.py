@@ -10,12 +10,37 @@ from src.eval import cmd_baseline, cmd_check, cmd_infer, cmd_sweep
 from src.models.m2f import build_parser, cmd_train
 
 
-def run_m2f_cli(argv: list[str] | None = None) -> None:
+def run_cli(argv: list[str] | None = None) -> None:
     """Разбирает аргументы и вызывает соответствующую подкоманду CLI."""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(encoding="utf-8", errors="replace")
+
+    args_list = list(sys.argv[1:] if argv is None else argv)
+
+    # Модель MaskDINO (detectron2): `python run.py mask_dino_dtn train ...`
+    if args_list and args_list[0] == "mask_dino_dtn":
+        from src.models.mask_dino_dtn import build_parser as build_dtn_parser
+        from src.models.mask_dino_dtn import cmd_train as dtn_cmd_train
+
+        args = build_dtn_parser().parse_args(args_list[1:])
+        if args.cmd == "train":
+            dtn_cmd_train(
+                smoke=args.smoke,
+                size=args.size,
+                epochs=args.epochs,
+                run_name=args.run_name,
+                ims_per_batch=args.ims_per_batch,
+                num_workers=args.num_workers,
+                resume=args.resume,
+                opts=args.opts,
+                config=args.config,
+            )
+        else:
+            raise SystemExit(f"unknown mask_dino_dtn command: {args.cmd}")
+        return
+
     p = build_parser()
     args = p.parse_args(argv)
     if args.cmd == "check":
@@ -56,4 +81,4 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    run_m2f_cli()
+    run_cli()
