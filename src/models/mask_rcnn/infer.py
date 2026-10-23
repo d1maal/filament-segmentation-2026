@@ -44,7 +44,7 @@ def _logit(x):
     return np.log(x / (1.0 - x))
 
 
-def prepare_output(output, score_floor: float = 0.0, inverse=None):
+def prepare_output(output, score_floor: float = 0.0, inverse=None, source="identity"):
     scores = output["scores"].detach().cpu().numpy().astype(np.float32)
     keep = np.flatnonzero(scores >= float(score_floor))
     prepared = []
@@ -52,7 +52,13 @@ def prepare_output(output, score_floor: float = 0.0, inverse=None):
         prob = output["masks"][int(idx), 0].detach().cpu().numpy().astype(np.float32)
         if inverse is not None:
             prob = inverse(prob)
-        prepared.append({"score": float(scores[idx]), "prob": prob})
+        prepared.append(
+            {
+                "score": float(scores[idx]),
+                "prob": prob,
+                "sources": {str(source)},
+            }
+        )
     return prepared
 
 
@@ -61,25 +67,52 @@ def _candidate_metrics(prob, score, mask_threshold, stability_delta, confidence_
     area = int(binary.sum())
     if area == 0:
         return area, 0.0, 0.0, 0.0
-    mask_confidence = float(prob[binary].mean())
+    confidence = float(prob[binary].mean())
     low_thr = max(0.01, mask_threshold - stability_delta)
     high_thr = min(0.99, mask_threshold + stability_delta)
     low_area = int((prob >= low_thr).sum())
     high_area = int((prob >= high_thr).sum())
     stability = float(high_area / low_area) if low_area else 0.0
     quality = float(score)
-    quality *= max(mask_confidence, 1e-6) ** float(confidence_power)
+    quality *= max(confidence, 1e-6) ** float(confidence_power)
     quality *= max(stability, 1e-6) ** float(stability_power)
-    return area, mask_confidence, stability, quality
+    return area, confidence, stability, quality
 
 
-def _deduplicate(candidates, mask_threshold, mode, iou_threshold, containment_threshold):
+def _refresh_candidate(candidate, mask_threshold, stability_delta, confidence_power, stability_power):
+    area, confidence, stability, quality = _candidate_metrics(
+        candidate["prob"],
+        candidate["score"],
+        mask_threshold,
+        stability_delta,
+        confidence_power,
+        stability_power,
+    )
+    candidate["area"] = area
+    candidate["mask_confidence"] = confidence
+    candidate["stability"] = stability
+    candidate["quality"] = quality
+    candidate["votes"] = len(candidate.get("sources", {"identity"}))
+    return candidate
+
+
+def _deduplicate(
+    candidates,
+    mask_threshold,
+    mode,
+    iou_threshold,
+    containment_threshold,
+    stability_delta,
+    confidence_power,
+    stability_power,
+):
     if len(candidates) <= 1 or mode == "none":
         return candidates
     order = sorted(range(len(candidates)), key=lambda i: candidates[i]["quality"], reverse=True)
     kept = []
     for idx in order:
         candidate = dict(candidates[idx])
+        candidate["sources"] = set(candidate.get("sources", {"identity"}))
         binary = candidate["prob"] >= mask_threshold
         hit = -1
         for j, existing in enumerate(kept):
@@ -92,14 +125,13 @@ def _deduplicate(candidates, mask_threshold, mode, iou_threshold, containment_th
             candidate["fusion_weight"] = max(candidate["quality"], 1e-6)
             kept.append(candidate)
             continue
+        kept[hit]["sources"].update(candidate["sources"])
         if mode == "suppress":
             continue
         if mode == "merge":
             kept[hit]["prob"] = np.maximum(kept[hit]["prob"], candidate["prob"])
             kept[hit]["score"] = max(kept[hit]["score"], candidate["score"])
-            kept[hit]["quality"] = max(kept[hit]["quality"], candidate["quality"])
-            continue
-        if mode == "weighted":
+        elif mode == "weighted":
             old_weight = float(kept[hit].get("fusion_weight", max(kept[hit]["quality"], 1e-6)))
             new_weight = max(float(candidate["quality"]), 1e-6)
             total = old_weight + new_weight
@@ -108,9 +140,15 @@ def _deduplicate(candidates, mask_threshold, mode, iou_threshold, containment_th
             ) / total
             kept[hit]["fusion_weight"] = total
             kept[hit]["score"] = max(kept[hit]["score"], candidate["score"])
-            kept[hit]["quality"] = max(kept[hit]["quality"], candidate["quality"])
-            continue
-        raise ValueError(f"Unknown duplicate mode: {mode}")
+        else:
+            raise ValueError(f"Unknown duplicate mode: {mode}")
+        _refresh_candidate(
+            kept[hit],
+            mask_threshold,
+            stability_delta,
+            confidence_power,
+            stability_power,
+        )
     return kept
 
 
@@ -124,21 +162,35 @@ def _assign_pixels(candidates, mask_threshold, overlap_score_weight):
     for idx, candidate in enumerate(candidates):
         prob = candidate["prob"].astype(np.float32, copy=False)
         active = prob >= mask_threshold
-        instance_quality = float(np.clip(candidate["quality"], 1e-5, 1.0 - 1e-5))
-        value = _logit(prob) + float(overlap_score_weight) * float(_logit(instance_quality))
+        quality = float(np.clip(candidate["quality"], 1e-5, 1.0 - 1e-5))
+        value = _logit(prob) + float(overlap_score_weight) * float(_logit(quality))
         update = active & (value > best)
         owner[update] = idx
         best[update] = value[update]
     return [(owner == idx).astype(np.uint8) for idx in range(len(candidates))]
 
 
-def _make_disjoint(candidates, mask_threshold, min_area, overlap_score_weight):
-    masks = _assign_pixels(candidates, mask_threshold, overlap_score_weight)
-    keep = [i for i, mask in enumerate(masks) if int(mask.sum()) >= min_area]
-    if len(keep) != len(masks):
-        candidates = [candidates[i] for i in keep]
+def _make_disjoint(
+    candidates,
+    mask_threshold,
+    min_area,
+    overlap_score_weight,
+    min_retained_fraction,
+):
+    candidates = list(candidates)
+    while candidates:
+        original_areas = [max(1, int((c["prob"] >= mask_threshold).sum())) for c in candidates]
         masks = _assign_pixels(candidates, mask_threshold, overlap_score_weight)
-    return [mask for mask in masks if int(mask.sum()) >= min_area]
+        keep = []
+        for i, mask in enumerate(masks):
+            area = int(mask.sum())
+            retained = float(area / original_areas[i])
+            if area >= min_area and retained >= min_retained_fraction:
+                keep.append(i)
+        if len(keep) == len(candidates):
+            return masks, candidates
+        candidates = [candidates[i] for i in keep]
+    return [], []
 
 
 def postprocess_prepared(
@@ -158,6 +210,10 @@ def postprocess_prepared(
     stability_power=None,
     enforce_disjoint=None,
     overlap_score_weight=None,
+    min_retained_fraction=None,
+    min_tta_votes=None,
+    single_view_score_threshold=None,
+    return_details=False,
 ):
     score_threshold = config.score_threshold if score_threshold is None else float(score_threshold)
     mask_threshold = config.mask_threshold if mask_threshold is None else float(mask_threshold)
@@ -174,38 +230,36 @@ def postprocess_prepared(
     stability_power = config.stability_power if stability_power is None else float(stability_power)
     enforce_disjoint = config.enforce_disjoint if enforce_disjoint is None else bool(enforce_disjoint)
     overlap_score_weight = config.overlap_score_weight if overlap_score_weight is None else float(overlap_score_weight)
+    min_retained_fraction = config.min_retained_fraction if min_retained_fraction is None else float(min_retained_fraction)
+    min_tta_votes = config.min_tta_votes if min_tta_votes is None else int(min_tta_votes)
+    single_view_score_threshold = config.single_view_score_threshold if single_view_score_threshold is None else float(single_view_score_threshold)
 
     candidates = []
     for item in prepared:
         score = float(item["score"])
         if score < score_threshold:
             continue
-        prob = item["prob"].astype(np.float32, copy=False)
-        area, confidence, stability, quality = _candidate_metrics(
-            prob,
-            score,
+        candidate = {
+            "prob": item["prob"].astype(np.float32, copy=False),
+            "score": score,
+            "sources": set(item.get("sources", {"identity"})),
+        }
+        _refresh_candidate(
+            candidate,
             mask_threshold,
             stability_delta,
             mask_confidence_power,
             stability_power,
         )
-        if area < min_area:
+        if candidate["area"] < min_area:
             continue
-        if confidence < min_mask_confidence:
+        if candidate["mask_confidence"] < min_mask_confidence:
             continue
-        if stability < min_stability:
+        if candidate["stability"] < min_stability:
             continue
-        if quality < quality_score_threshold:
+        if candidate["quality"] < quality_score_threshold:
             continue
-        candidates.append(
-            {
-                "prob": prob,
-                "score": score,
-                "quality": quality,
-                "mask_confidence": confidence,
-                "stability": stability,
-            }
-        )
+        candidates.append(candidate)
 
     if deduplicate:
         candidates = _deduplicate(
@@ -214,21 +268,55 @@ def postprocess_prepared(
             duplicate_mode,
             mask_nms_iou,
             containment_threshold,
+            stability_delta,
+            mask_confidence_power,
+            stability_power,
         )
 
+    selected = []
+    for candidate in candidates:
+        _refresh_candidate(
+            candidate,
+            mask_threshold,
+            stability_delta,
+            mask_confidence_power,
+            stability_power,
+        )
+        votes = int(candidate["votes"])
+        if votes < min_tta_votes and candidate["score"] < single_view_score_threshold:
+            continue
+        selected.append(candidate)
+
     if enforce_disjoint:
-        return _make_disjoint(
-            candidates,
+        masks, selected = _make_disjoint(
+            selected,
             mask_threshold,
             min_area,
             overlap_score_weight,
+            min_retained_fraction,
         )
+    else:
+        masks = [
+            (candidate["prob"] >= mask_threshold).astype(np.uint8)
+            for candidate in selected
+            if int((candidate["prob"] >= mask_threshold).sum()) >= min_area
+        ]
 
-    return [
-        (candidate["prob"] >= mask_threshold).astype(np.uint8)
-        for candidate in candidates
-        if int((candidate["prob"] >= mask_threshold).sum()) >= min_area
-    ]
+    if return_details:
+        details = []
+        for candidate, mask in zip(selected, masks):
+            details.append(
+                {
+                    "score": float(candidate["score"]),
+                    "quality": float(candidate["quality"]),
+                    "mask_confidence": float(candidate["mask_confidence"]),
+                    "stability": float(candidate["stability"]),
+                    "votes": int(candidate["votes"]),
+                    "area": int(mask.sum()),
+                }
+            )
+        return masks, details
+    return masks
 
 
 def postprocess_output(output, **kwargs):
@@ -245,20 +333,46 @@ def _apply_tta(image, name):
         return torch.flip(image, dims=[2]), lambda x: np.flip(x, axis=1).copy()
     if name == "vflip":
         return torch.flip(image, dims=[1]), lambda x: np.flip(x, axis=0).copy()
+    if name == "rot90":
+        return torch.rot90(image, 1, dims=[1, 2]), lambda x: np.rot90(x, -1).copy()
     if name == "rot180":
         return torch.rot90(image, 2, dims=[1, 2]), lambda x: np.rot90(x, 2).copy()
+    if name == "rot270":
+        return torch.rot90(image, 3, dims=[1, 2]), lambda x: np.rot90(x, 1).copy()
+    if name == "transpose":
+        return image.transpose(1, 2), lambda x: np.transpose(x).copy()
+    if name == "antitranspose":
+        transformed = torch.flip(image.transpose(1, 2), dims=[1, 2])
+        return transformed, lambda x: np.flip(np.transpose(x), axis=(0, 1)).copy()
     raise ValueError(f"Unknown TTA transform: {name}")
+
+
+def _resolve_tta(tta):
+    if tta is True or tta == "light":
+        return config.tta_transforms_light
+    if tta == "full":
+        return config.tta_transforms_full
+    if isinstance(tta, (tuple, list)):
+        return tuple(tta)
+    return ()
 
 
 @torch.no_grad()
 def prepare_tta(model, image, device, transforms=None, score_floor=0.0):
-    transforms = tuple(transforms or config.tta_transforms)
+    transforms = tuple(transforms or config.tta_transforms_light)
     prepared = []
     image = image.to(device)
     for name in transforms:
         transformed, inverse = _apply_tta(image, name)
         output = model([transformed])[0]
-        prepared.extend(prepare_output(output, score_floor=score_floor, inverse=inverse))
+        prepared.extend(
+            prepare_output(
+                output,
+                score_floor=score_floor,
+                inverse=inverse,
+                source=name,
+            )
+        )
     return prepared
 
 
@@ -266,9 +380,15 @@ def prepare_tta(model, image, device, transforms=None, score_floor=0.0):
 def predict_masks(model, image, device, tta=False, **kwargs):
     score_threshold = kwargs.get("score_threshold")
     floor = config.score_threshold if score_threshold is None else float(score_threshold)
-    if tta:
-        transforms = config.tta_transforms if tta is True else tuple(tta)
-        prepared = prepare_tta(model, image, device, transforms=transforms, score_floor=floor)
+    transforms = _resolve_tta(tta)
+    if transforms:
+        prepared = prepare_tta(
+            model,
+            image,
+            device,
+            transforms=transforms,
+            score_floor=floor,
+        )
         return postprocess_prepared(prepared, **kwargs)
     output = model([image.to(device)])[0]
     return postprocess_output(output, **kwargs)

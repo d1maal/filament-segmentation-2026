@@ -1,4 +1,5 @@
 import csv
+import json
 import math
 import shutil
 from pathlib import Path
@@ -17,7 +18,7 @@ from .utils import collate_fn, get_device, save_json
 
 
 @torch.no_grad()
-def evaluate(model, dataset, device, limit=0, tta=False):
+def evaluate(model, dataset, device, limit=0, tta=False, **predict_kwargs):
     model.eval()
     loader = DataLoader(
         dataset,
@@ -32,7 +33,7 @@ def evaluate(model, dataset, device, limit=0, tta=False):
     for i, (images, targets) in enumerate(tqdm(loader, desc="val")):
         if limit and i >= limit:
             break
-        pred = predict_masks(model, images[0], device, tta=tta)
+        pred = predict_masks(model, images[0], device, tta=tta, **predict_kwargs)
         gt = [mask.numpy().astype("uint8") for mask in targets[0]["masks"]]
         rows.append(panoptic_quality(gt, pred))
     return aggregate(rows)
@@ -55,7 +56,7 @@ def _make_scheduler(optimizer, lr, epochs, steps_per_epoch):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, schedule)
 
 
-def _checkpoint_state(model, optimizer, scheduler, scaler, epoch, image_size, architecture):
+def _full_checkpoint(model, optimizer, scheduler, scaler, epoch, image_size, architecture):
     return {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -64,6 +65,16 @@ def _checkpoint_state(model, optimizer, scheduler, scaler, epoch, image_size, ar
         "epoch": int(epoch),
         "image_size": int(image_size),
         "architecture": architecture,
+    }
+
+
+def _model_checkpoint(model, epoch, image_size, architecture, metrics=None):
+    return {
+        "model": model.state_dict(),
+        "epoch": int(epoch),
+        "image_size": int(image_size),
+        "architecture": architecture,
+        "metrics": dict(metrics or {}),
     }
 
 
@@ -102,6 +113,24 @@ def _average_model_states(paths, device="cpu"):
     state["model"] = averaged
     state["averaged_from"] = [str(path) for path in paths]
     return state
+
+
+def _prune_epoch_checkpoints(weights_dir: Path, keep_last: int):
+    paths = sorted(weights_dir.glob("epoch_*.pt"))
+    keep_last = max(1, int(keep_last))
+    for path in paths[:-keep_last]:
+        path.unlink(missing_ok=True)
+    return sorted(weights_dir.glob("epoch_*.pt"))
+
+
+def _load_history(path: Path):
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
 
 
 def train(
@@ -175,11 +204,15 @@ def train(
     weights_dir = out / "weights"
     out.mkdir(parents=True, exist_ok=True)
     weights_dir.mkdir(parents=True, exist_ok=True)
+    _prune_epoch_checkpoints(weights_dir, config.checkpoint_keep_last)
 
-    best_quick_pq = -1.0
-    best_full_pq = -1.0
-    history = []
-    saved_epoch_paths = []
+    history = _load_history(out / "train_log.json") if resume else []
+    if resume:
+        history = [row for row in history if int(row.get("epoch", 0)) < start_epoch]
+
+    best_quick_pq = max((float(row.get("pq", -1.0)) for row in history), default=-1.0)
+    full_values = [row.get("full_pq") for row in history if row.get("full_pq") is not None]
+    best_full_pq = max((float(x) for x in full_values), default=-1.0)
 
     for epoch in range(start_epoch, epochs + 1):
         model.train()
@@ -209,7 +242,6 @@ def train(
             steps += 1
 
         quick_metrics = evaluate(model, val_ds, device, limit=eval_limit)
-
         do_full = eval_limit == 0 or (
             epoch >= int(config.full_eval_start)
             and (
@@ -236,7 +268,7 @@ def train(
         }
         history.append(row)
 
-        state = _checkpoint_state(
+        full_state = _full_checkpoint(
             model,
             optimizer,
             scheduler,
@@ -245,24 +277,32 @@ def train(
             image_size,
             architecture,
         )
-        torch.save(state, out / "last.pt")
+        torch.save(full_state, out / "last.pt")
+
+        model_state = _model_checkpoint(
+            model,
+            epoch,
+            image_size,
+            architecture,
+            metrics=full_metrics or quick_metrics,
+        )
         epoch_path = weights_dir / f"epoch_{epoch:02d}.pt"
-        torch.save(state, epoch_path)
-        saved_epoch_paths.append(epoch_path)
+        torch.save(model_state, epoch_path)
+        _prune_epoch_checkpoints(weights_dir, config.checkpoint_keep_last)
 
         quick_pq = float(quick_metrics.get("pq", 0.0))
         if quick_pq > best_quick_pq:
             best_quick_pq = quick_pq
-            torch.save(state, out / "best_quick.pt")
+            torch.save(model_state, out / "best_quick.pt")
             if best_full_pq < 0:
-                torch.save(state, out / "best.pt")
+                torch.save(model_state, out / "best.pt")
 
         if full_metrics is not None:
             full_pq = float(full_metrics.get("pq", 0.0))
             if full_pq > best_full_pq:
                 best_full_pq = full_pq
-                torch.save(state, out / "best_full.pt")
-                torch.save(state, out / "best.pt")
+                torch.save(model_state, out / "best_full.pt")
+                torch.save(model_state, out / "best.pt")
 
         save_json(out / "train_log.json", history)
         with (out / "train_log.csv").open("w", newline="", encoding="utf-8") as f:
@@ -279,9 +319,10 @@ def train(
             message += f" full_PQ={float(full_metrics.get('pq', 0.0)):.4f}"
         print(message)
 
-    n = min(int(config.swa_last_n), len(saved_epoch_paths))
+    retained = _prune_epoch_checkpoints(weights_dir, config.checkpoint_keep_last)
+    n = min(int(config.swa_last_n), len(retained))
     if n >= 2:
-        swa_paths = saved_epoch_paths[-n:]
+        swa_paths = retained[-n:]
         swa_state = _average_model_states(swa_paths, device="cpu")
         swa_path = out / f"average_last{n}.pt"
         torch.save(swa_state, swa_path)
@@ -295,7 +336,6 @@ def train(
             f"FN={swa_metrics.get('fn', 0)}"
         )
         if swa_pq > best_full_pq:
-            best_full_pq = swa_pq
             shutil.copy2(swa_path, out / "best.pt")
             shutil.copy2(swa_path, out / "best_full.pt")
 

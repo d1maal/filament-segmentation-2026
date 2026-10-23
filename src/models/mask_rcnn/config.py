@@ -7,7 +7,7 @@ class MaskRCNNConfig:
     num_classes: int = 2
     architecture: str = "v3"
     image_size: int = 1344
-    epochs: int = 36
+    epochs: int = 42
     batch_size: int = 1
     lr: float = 1.5e-4
     min_lr: float = 5e-6
@@ -61,11 +61,34 @@ class MaskRCNNConfig:
 
     enforce_disjoint: bool = True
     overlap_score_weight: float = 0.35
-    tta_transforms: tuple[str, ...] = ("identity", "hflip", "vflip")
+    min_retained_fraction: float = 0.10
+
+    min_tta_votes: int = 1
+    single_view_score_threshold: float = 0.75
+    tta_transforms_light: tuple[str, ...] = (
+        "identity",
+        "hflip",
+        "vflip",
+        "rot180",
+    )
+    tta_transforms_full: tuple[str, ...] = (
+        "identity",
+        "rot90",
+        "rot180",
+        "rot270",
+        "hflip",
+        "vflip",
+        "transpose",
+        "antitranspose",
+    )
+
+    autopsy_score_floor: float = 0.25
+    autopsy_overlays: int = 20
 
     full_eval_start: int = 18
     full_eval_every: int = 6
     swa_last_n: int = 5
+    checkpoint_keep_last: int = 5
 
     output_dir: Path = Path("outputs") / "mask_rcnn"
 

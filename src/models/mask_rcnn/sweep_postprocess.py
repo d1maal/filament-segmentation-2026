@@ -17,11 +17,11 @@ from .infer import load_checkpoint, postprocess_prepared, prepare_output, prepar
 from .utils import collate_fn
 
 
-def _base(score, mask=0.50):
+def _base(score=0.55, mask=0.50, area=150):
     return {
         "score_threshold": float(score),
         "mask_threshold": float(mask),
-        "min_area": 150,
+        "min_area": int(area),
         "deduplicate": True,
         "duplicate_mode": "weighted",
         "mask_nms_iou": 0.60,
@@ -34,45 +34,52 @@ def _base(score, mask=0.50):
         "stability_power": 0.25,
         "enforce_disjoint": True,
         "overlap_score_weight": 0.35,
+        "min_retained_fraction": 0.10,
+        "min_tta_votes": 1,
+        "single_view_score_threshold": 0.75,
     }
 
 
-def _configs():
+def _configs(tta_mode="none"):
     configs = []
-
-    for score in [0.50, 0.55, 0.60, 0.65, 0.70]:
+    if tta_mode == "none":
+        for score in [0.45, 0.50, 0.55, 0.60, 0.65]:
+            for mask in [0.45, 0.50, 0.55]:
+                for area in [80, 150, 250]:
+                    configs.append(_base(score, mask, area))
+        for score in [0.50, 0.55, 0.60]:
+            for quality in [0.30, 0.35, 0.40, 0.45]:
+                cfg = _base(score)
+                cfg["quality_score_threshold"] = quality
+                configs.append(cfg)
+        for retained in [0.0, 0.10, 0.20, 0.35]:
+            for overlap_w in [0.0, 0.20, 0.35, 0.50, 0.75]:
+                cfg = _base()
+                cfg["min_retained_fraction"] = retained
+                cfg["overlap_score_weight"] = overlap_w
+                configs.append(cfg)
+    else:
+        for score in [0.30, 0.35, 0.40, 0.45, 0.50]:
+            for votes in [1, 2, 3]:
+                for singleton in [0.65, 0.75, 0.85]:
+                    cfg = _base(score)
+                    cfg["min_tta_votes"] = votes
+                    cfg["single_view_score_threshold"] = singleton
+                    configs.append(cfg)
         for mask in [0.45, 0.50, 0.55]:
-            configs.append(_base(score, mask))
-
-    for score in [0.50, 0.55, 0.60, 0.65]:
-        for quality in [0.35, 0.40, 0.45, 0.50]:
-            cfg = _base(score)
-            cfg["quality_score_threshold"] = quality
-            configs.append(cfg)
-
-    for score in [0.50, 0.55, 0.60, 0.65]:
-        for stability in [0.45, 0.55, 0.65]:
-            cfg = _base(score)
-            cfg["min_stability"] = stability
-            configs.append(cfg)
-
-    for score in [0.50, 0.55, 0.60, 0.65]:
-        for mode in ["suppress", "merge", "weighted"]:
-            cfg = _base(score)
-            cfg["duplicate_mode"] = mode
-            configs.append(cfg)
-
-    for score in [0.50, 0.55, 0.60, 0.65]:
-        for nms_iou in [0.50, 0.60, 0.70]:
-            cfg = _base(score)
-            cfg["mask_nms_iou"] = nms_iou
-            configs.append(cfg)
-
-    for score in [0.50, 0.55, 0.60, 0.65]:
-        for weight in [0.0, 0.20, 0.35, 0.50, 0.75]:
-            cfg = _base(score)
-            cfg["overlap_score_weight"] = weight
-            configs.append(cfg)
+            for area in [80, 150, 250]:
+                cfg = _base(0.35, mask, area)
+                cfg["min_tta_votes"] = 2
+                cfg["single_view_score_threshold"] = 0.75
+                configs.append(cfg)
+        for retained in [0.0, 0.10, 0.20, 0.35]:
+            for overlap_w in [0.0, 0.20, 0.35, 0.50, 0.75]:
+                cfg = _base(0.35)
+                cfg["min_tta_votes"] = 2
+                cfg["single_view_score_threshold"] = 0.75
+                cfg["min_retained_fraction"] = retained
+                cfg["overlap_score_weight"] = overlap_w
+                configs.append(cfg)
 
     unique = []
     seen = set()
@@ -84,12 +91,20 @@ def _configs():
     return unique
 
 
+def _tta_transforms(mode):
+    if mode == "light":
+        return config.tta_transforms_light
+    if mode == "full":
+        return config.tta_transforms_full
+    return ()
+
+
 @torch.no_grad()
 def run_sweep(
     weights: str | Path,
     limit: int = 0,
     out_csv: str | Path | None = None,
-    tta: bool = False,
+    tta_mode: str = "none",
 ):
     model, device = load_checkpoint(weights)
     dataset = FilamentMaskRCNNDataset(train=False, augment=False)
@@ -100,19 +115,20 @@ def run_sweep(
         num_workers=0,
         collate_fn=collate_fn,
     )
-    configs = _configs()
+    configs = _configs(tta_mode=tta_mode)
     floor = min(cfg["score_threshold"] for cfg in configs)
     rows_by_config = [[] for _ in configs]
+    transforms = _tta_transforms(tta_mode)
 
-    for image_index, (images, targets) in enumerate(tqdm(loader, desc="sweep val")):
+    for image_index, (images, targets) in enumerate(tqdm(loader, desc="selector sweep")):
         if limit and image_index >= limit:
             break
-        if tta:
+        if transforms:
             prepared = prepare_tta(
                 model,
                 images[0],
                 device,
-                transforms=config.tta_transforms,
+                transforms=transforms,
                 score_floor=floor,
             )
         else:
@@ -130,17 +146,30 @@ def run_sweep(
     results = []
     for cfg, metric_rows in zip(configs, rows_by_config):
         metrics = aggregate(metric_rows)
-        results.append({"tta": bool(tta), **cfg, **metrics})
+        tp = int(metrics.get("tp", 0))
+        fp = int(metrics.get("fp", 0))
+        fn = int(metrics.get("fn", 0))
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        results.append(
+            {
+                "tta": tta_mode,
+                **cfg,
+                **metrics,
+                "precision": precision,
+                "recall": recall,
+            }
+        )
     results.sort(key=lambda row: row["pq"], reverse=True)
 
     for i, row in enumerate(results[:20], 1):
         print(
-            f"{i:02d}. PQ={row['pq']:.5f} score={row['score_threshold']:.2f} "
-            f"mask={row['mask_threshold']:.2f} quality={row['quality_score_threshold']:.2f} "
-            f"stability={row['min_stability']:.2f} mode={row['duplicate_mode']} "
-            f"overlap_w={row['overlap_score_weight']:.2f} "
-            f"TP={row['tp']} FP={row['fp']} FN={row['fn']} "
-            f"splits={row['splits']} merges={row['merges']}"
+            f"{i:02d}. PQ={row['pq']:.5f} P={row['precision']:.3f} R={row['recall']:.3f} "
+            f"score={row['score_threshold']:.2f} mask={row['mask_threshold']:.2f} "
+            f"area={row['min_area']} votes={row['min_tta_votes']} "
+            f"singleton={row['single_view_score_threshold']:.2f} "
+            f"retained={row['min_retained_fraction']:.2f} overlap_w={row['overlap_score_weight']:.2f} "
+            f"TP={row['tp']} FP={row['fp']} FN={row['fn']}"
         )
 
     if out_csv is not None and results:
@@ -158,10 +187,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", required=True)
     parser.add_argument("--limit", type=int, default=0)
-    parser.add_argument("--out", default="outputs/mask_rcnn/postprocess_sweep_v4.csv")
-    parser.add_argument("--tta", action="store_true")
+    parser.add_argument("--out", default="outputs/mask_rcnn/postprocess_sweep_v5.csv")
+    parser.add_argument("--tta", choices=["none", "light", "full"], default="none")
     args = parser.parse_args()
-    run_sweep(args.weights, limit=args.limit, out_csv=args.out, tta=args.tta)
+    run_sweep(args.weights, limit=args.limit, out_csv=args.out, tta_mode=args.tta)
 
 
 if __name__ == "__main__":
