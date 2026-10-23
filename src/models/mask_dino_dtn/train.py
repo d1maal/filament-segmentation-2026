@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import copy
 import itertools
+import logging
 import math
 import shutil
 import sys
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+warnings.filterwarnings("ignore")
 
 import mlflow
 import torch
@@ -23,6 +27,7 @@ from detectron2.data import (
     build_detection_train_loader,
 )
 from detectron2.engine import DefaultTrainer, HookBase
+from detectron2.modeling import build_model
 from detectron2.projects.deeplab import add_deeplab_config
 from detectron2.solver.build import maybe_add_gradient_clipping
 from detectron2.utils import comm
@@ -39,6 +44,11 @@ from src.tracking.dagshub import init_dagshub, log_maskdino_artifacts
 
 class Trainer(DefaultTrainer):
     """DefaultTrainer с 3-канальным маппером MAGFiLO."""
+
+    @classmethod
+    def build_model(cls, cfg: CfgNode):
+        """Собирает модель без дампа архитектуры в лог."""
+        return build_model(cfg)
 
     @classmethod
     def build_train_loader(cls, cfg: CfgNode):
@@ -284,6 +294,7 @@ def _setup_logging(cfg: CfgNode, config_path: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(config_path, out / "config.yaml")
     setup_logger(output=str(out), distributed_rank=comm.get_rank(), name="maskdino")
+    logging.getLogger("detectron2.checkpoint.detection_checkpoint").setLevel(logging.WARNING)
     seed_all_rng(cfg.SEED)
 
 
