@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import itertools
 import math
 import shutil
 import sys
@@ -12,6 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import mlflow
+import torch
 from detectron2.config import CfgNode, get_cfg
 from detectron2.data import (
     DatasetCatalog,
@@ -21,6 +24,7 @@ from detectron2.data import (
 )
 from detectron2.engine import DefaultTrainer, HookBase
 from detectron2.projects.deeplab import add_deeplab_config
+from detectron2.solver.build import maybe_add_gradient_clipping
 from detectron2.utils import comm
 from detectron2.utils.env import seed_all_rng
 from detectron2.utils.events import get_event_storage
@@ -63,6 +67,90 @@ class Trainer(DefaultTrainer):
         if evaluator_type == "magfilo":
             return HomePQEvaluator(dataset_name)
         return super().build_evaluator(cfg, dataset_name, output_folder)
+
+    @classmethod
+    def build_optimizer(cls, cfg: CfgNode, model):
+        """Собирает оптимизатор как в референсе MaskDINO.
+
+        Учитывает BACKBONE_MULTIPLIER и full_model-клиппинг, которые
+        стандартный detectron2-оптимизатор не поддерживает.
+
+        params:
+            cfg: конфиг detectron2
+            model: модель
+        returns:
+            оптимизатор
+        """
+        weight_decay_norm = cfg.SOLVER.WEIGHT_DECAY_NORM
+        weight_decay_embed = cfg.SOLVER.WEIGHT_DECAY_EMBED
+        defaults = {
+            "lr": cfg.SOLVER.BASE_LR,
+            "weight_decay": cfg.SOLVER.WEIGHT_DECAY,
+        }
+        norm_module_types = (
+            torch.nn.BatchNorm1d,
+            torch.nn.BatchNorm2d,
+            torch.nn.BatchNorm3d,
+            torch.nn.SyncBatchNorm,
+            torch.nn.GroupNorm,
+            torch.nn.InstanceNorm1d,
+            torch.nn.InstanceNorm2d,
+            torch.nn.InstanceNorm3d,
+            torch.nn.LayerNorm,
+            torch.nn.LocalResponseNorm,
+        )
+
+        params: list[dict] = []
+        memo: set = set()
+        for module_name, module in model.named_modules():
+            for module_param_name, value in module.named_parameters(recurse=False):
+                if not value.requires_grad or value in memo:
+                    continue
+                memo.add(value)
+                hyperparams = copy.copy(defaults)
+                if "backbone" in module_name:
+                    hyperparams["lr"] = hyperparams["lr"] * cfg.SOLVER.BACKBONE_MULTIPLIER
+                if (
+                    "relative_position_bias_table" in module_param_name
+                    or "absolute_pos_embed" in module_param_name
+                ):
+                    hyperparams["weight_decay"] = 0.0
+                if isinstance(module, norm_module_types):
+                    hyperparams["weight_decay"] = weight_decay_norm
+                if isinstance(module, torch.nn.Embedding):
+                    hyperparams["weight_decay"] = weight_decay_embed
+                params.append({"params": [value], **hyperparams})
+
+        def maybe_add_full_model_gradient_clipping(optim):
+            clip_norm_val = cfg.SOLVER.CLIP_GRADIENTS.CLIP_VALUE
+            enable = (
+                cfg.SOLVER.CLIP_GRADIENTS.ENABLED
+                and cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE == "full_model"
+                and clip_norm_val > 0.0
+            )
+
+            class FullModelGradientClippingOptimizer(optim):
+                def step(self, closure=None):
+                    all_params = itertools.chain(*[x["params"] for x in self.param_groups])
+                    torch.nn.utils.clip_grad_norm_(all_params, clip_norm_val)
+                    super().step(closure=closure)
+
+            return FullModelGradientClippingOptimizer if enable else optim
+
+        optimizer_type = cfg.SOLVER.OPTIMIZER
+        if optimizer_type == "SGD":
+            optimizer = maybe_add_full_model_gradient_clipping(torch.optim.SGD)(
+                params, cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM
+            )
+        elif optimizer_type == "ADAMW":
+            optimizer = maybe_add_full_model_gradient_clipping(torch.optim.AdamW)(
+                params, cfg.SOLVER.BASE_LR
+            )
+        else:
+            raise NotImplementedError(f"no optimizer type {optimizer_type}")
+        if cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE != "full_model":
+            optimizer = maybe_add_gradient_clipping(cfg, optimizer)
+        return optimizer
 
 
 class MLflowLossHook(HookBase):
@@ -234,7 +322,6 @@ def cmd_train(
         opts=opts,
     )
     _setup_logging(cfg, config)
-    print(cfg)
 
     run = None
     if init_dagshub():
