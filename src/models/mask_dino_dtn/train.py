@@ -10,6 +10,7 @@ import shutil
 import sys
 import warnings
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -32,8 +33,9 @@ from detectron2.projects.deeplab import add_deeplab_config
 from detectron2.solver.build import maybe_add_gradient_clipping
 from detectron2.utils import comm
 from detectron2.utils.env import seed_all_rng
-from detectron2.utils.events import get_event_storage
+from detectron2.utils.events import JSONWriter, TensorboardXWriter, get_event_storage
 from detectron2.utils.logger import setup_logger
+from tqdm.auto import tqdm
 
 from src.config import config as project_config
 from src.models.mask_dino_dtn.dataset_mapper import MagfiloThreeChannelDatasetMapper
@@ -162,6 +164,51 @@ class Trainer(DefaultTrainer):
             optimizer = maybe_add_gradient_clipping(cfg, optimizer)
         return optimizer
 
+    def build_writers(self):
+        """Пишет metrics.json и tensorboard без консольного дампа метрик."""
+        output_dir = str(self.cfg.OUTPUT_DIR)
+        return [
+            JSONWriter(str(Path(output_dir) / "metrics.json")),
+            TensorboardXWriter(output_dir),
+        ]
+
+
+class EpochProgressHook(HookBase):
+    """Показывает tqdm-бар прогресса внутри текущей эпохи.
+
+    Attributes:
+        iters_per_epoch: число итераций в одной эпохе
+    """
+
+    def __init__(self, iters_per_epoch: int) -> None:
+        self.iters_per_epoch = max(1, iters_per_epoch)
+        self._bar: Any = None
+        self._epoch = -1
+
+    def after_step(self) -> None:
+        epoch = self.trainer.iter // self.iters_per_epoch
+        if epoch != self._epoch:
+            if self._bar is not None:
+                self._bar.close()
+            self._epoch = epoch
+            self._bar = tqdm(
+                total=self.iters_per_epoch,
+                desc=f"epoch {epoch + 1}",
+                unit="it",
+            )
+        self._bar.update(1)
+
+        latest = get_event_storage().latest()
+        if "total_loss" in latest:
+            value = latest["total_loss"]
+            loss = value[1] if isinstance(value, tuple) else value
+            self._bar.set_postfix(loss=f"{float(loss):.1f}")
+
+    def after_train(self) -> None:
+        if self._bar is not None:
+            self._bar.close()
+            self._bar = None
+
 
 class MLflowLossHook(HookBase):
     """Логирует средний train_loss за эпоху в активный MLflow-ран.
@@ -248,7 +295,14 @@ def _build_cfg(
     add_maskdino_config(cfg)
     cfg.merge_from_file(str(config))
 
-    merge_opts: list[str] = ["INPUT.IMAGE_SIZE", str(size)]
+    merge_opts: list[str] = [
+        "INPUT.IMAGE_SIZE",
+        str(size),
+        "INPUT.MIN_SIZE_TEST",
+        str(size),
+        "INPUT.MAX_SIZE_TEST",
+        str(size),
+    ]
     if ims_per_batch is not None:
         merge_opts += ["SOLVER.IMS_PER_BATCH", str(ims_per_batch)]
     if num_workers is not None:
@@ -353,8 +407,11 @@ def cmd_train(
             run = None
 
     trainer = Trainer(cfg)
+    iters_per_epoch = _iters_per_epoch(cfg)
+    hooks = [EpochProgressHook(iters_per_epoch)]
     if run is not None and not smoke:
-        trainer.register_hooks([MLflowLossHook(_iters_per_epoch(cfg)), MLflowEvalHook()])
+        hooks += [MLflowLossHook(iters_per_epoch), MLflowEvalHook()]
+    trainer.register_hooks(hooks)
     trainer.resume_or_load(resume=resume)
     trainer.train()
 

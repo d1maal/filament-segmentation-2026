@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 from detectron2.data import DatasetCatalog
 from detectron2.evaluation import DatasetEvaluator
@@ -46,27 +47,34 @@ class HomePQEvaluator(DatasetEvaluator):
             )
         return gt
 
-    def process(self, inputs: dict, outputs: dict) -> None:
-        """Считает PQ для одного изображения и копит строку метрик.
+    def process(self, inputs: list[dict], outputs: list[dict]) -> None:
+        """Считает PQ для каждого изображения батча и копит строки метрик.
 
         params:
-            inputs: словарь detectron2 с полем image_id
-            outputs: результат модели с полем instances
+            inputs: список словарей detectron2 (по одному на изображение)
+            outputs: список результатов модели с полем instances
         """
-        image_id = inputs["image_id"]
-        gt_masks: list[np.ndarray] = []
-        if image_id in self._gt:
-            height, width, annotations = self._gt[image_id]
-            decoded = [decode_ann_mask(ann, height, width) for ann in annotations]
-            gt_masks = [mask for mask in decoded if mask.any()]
+        for input, output in zip(inputs, outputs):
+            image_id = input["image_id"]
+            gt_masks: list[np.ndarray] = []
+            gt_h, gt_w = 0, 0
+            if image_id in self._gt:
+                gt_h, gt_w, annotations = self._gt[image_id]
+                decoded = [decode_ann_mask(ann, gt_h, gt_w) for ann in annotations]
+                gt_masks = [mask for mask in decoded if mask.any()]
 
-        instances = outputs["instances"]
-        pred_masks = [
-            mask.cpu().numpy()
-            for mask, score in zip(instances.pred_masks, instances.scores)
-            if float(score) >= self._score_threshold
-        ]
-        self._rows.append(panoptic_quality(gt_masks, pred_masks))
+            instances = output["instances"]
+            pred_masks: list[np.ndarray] = []
+            for mask, score in zip(instances.pred_masks, instances.scores):
+                if float(score) < self._score_threshold:
+                    continue
+                pred = mask.cpu().numpy()
+                if gt_h and pred.shape != (gt_h, gt_w):
+                    pred = cv2.resize(
+                        pred.astype(np.uint8), (gt_w, gt_h), interpolation=cv2.INTER_NEAREST
+                    ).astype(bool)
+                pred_masks.append(pred)
+            self._rows.append(panoptic_quality(gt_masks, pred_masks))
 
     def evaluate(self) -> dict:
         """Агрегирует Home PQ по всем обработанным изображениям.
