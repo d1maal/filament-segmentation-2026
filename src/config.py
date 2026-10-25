@@ -51,7 +51,9 @@ class DagshubConfig:
 
     repo_owner: str = os.environ.get("DAGSHUB_REPO_OWNER", "BraveCactus")
     repo_name: str = os.environ.get("DAGSHUB_REPO_NAME", "solar-filament-segmentation")
-    experiment_name: str = os.environ.get("DAGSHUB_EXPERIMENT_NAME", "Test_Experiment_1")
+    experiment_name: str = os.environ.get(
+        "DAGSHUB_EXPERIMENT_NAME", "Test_Experiment_1"
+    )
     token: str = os.environ.get("DAGSHUB_TOKEN", "")
 
     @property
@@ -87,6 +89,10 @@ class Config:
     test_images: Path = field(init=False)
     submission_baseline_path: Path = field(init=False)
     submission_model_path: Path = field(init=False)
+    edgeattn_path: Path = field(init=False)
+    edgeattn_experiments_path: Path = field(init=False)
+    edgeattn_default_weights: Path = field(init=False)
+    submission_edgeattn_path: Path = field(init=False)
 
     dagshub: DagshubConfig = field(default_factory=DagshubConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
@@ -105,6 +111,12 @@ class Config:
         self.val_ids_path = self.root / "splits" / "val_ids.txt"
         self.submission_baseline_path = self.outputs_path / "submission_baseline.csv"
         self.submission_model_path = self.outputs_path / "submission_m2f.csv"
+        self.edgeattn_path = self.outputs_path / "edgeattn"
+        self.edgeattn_experiments_path = self.edgeattn_path / "experiments"
+        self.edgeattn_default_weights = (
+            self.edgeattn_experiments_path / "edgeattn" / "best.pt"
+        )
+        self.submission_edgeattn_path = self.outputs_path / "submission_edgeattn.csv"
 
 
 config = Config()
