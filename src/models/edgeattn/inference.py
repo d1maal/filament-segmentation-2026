@@ -25,7 +25,9 @@ from src.models.m2f.tiling import _tile_starts
 DEPTH = 16
 
 
-def mask_to_labels(prob: np.ndarray, thr: float = 0.5, min_area: int = 0) -> np.ndarray:
+def mask_to_labels(
+    prob: np.ndarray, thr: float = 0.35, min_area: int = 0
+) -> np.ndarray:
     """Превращает карту вероятностей в карту меток инстансов.
     params:
         prob: вероятность филамента (H, W) в [0, 1]

@@ -37,7 +37,7 @@ from src.models.edgeattn.pq_fast import (
 )
 from src.tracking.dagshub import init_dagshub
 
-PQ_SCORE_THR = 0.5
+PQ_SCORE_THR = 0.35
 PQ_MIN_AREA = 80
 VIZ_TOP_K = 5
 
@@ -196,6 +196,34 @@ def _save_viz(
         print(f"Saved {saved} visualizations to {run_dir / 'viz'}")
 
 
+def _make_scheduler(
+    optimizer: torch.optim.Optimizer,
+    total_steps: int,
+    warmup_steps: int,
+    cosine: bool,
+) -> torch.optim.lr_scheduler.LambdaLR | None:
+    """Создаёт расписание lr: линейный warmup и опциональный косинус-декай.
+    params:
+        optimizer: оптимизатор
+        total_steps: общее число шагов оптимизатора
+        warmup_steps: число шагов линейного разгона
+        cosine: включить косинус-декай после warmup
+    returns:
+        LambdaLR или None, если расписание не нужно
+    """
+    if not cosine and warmup_steps <= 0:
+        return None
+
+    def lr_lambda(step: int) -> float:
+        if warmup_steps > 0 and step < warmup_steps:
+            return max(1e-3, (step + 1) / warmup_steps)
+        tail = max(1, total_steps - warmup_steps)
+        progress = min(1.0, max(0.0, (step - warmup_steps) / tail))
+        return 0.5 * (1.0 + math.cos(math.pi * progress)) if cosine else 1.0
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+
 def train(
     arch: str = "edgeattn",
     in_ch: int = 3,
@@ -211,6 +239,7 @@ def train(
     eval_samples_train: int = 0,
     eval_tiled: bool = False,
     cosine: bool = False,
+    warmup_epochs: int = 0,
     workers: int = 0,
     max_steps: int = 0,
     seed: int = DATA_SEED,
@@ -236,6 +265,7 @@ def train(
         eval_samples_train: число train-кадров для PQ (0 — не считать)
         eval_tiled: считать PQ тайловым инференсом
         cosine: косинус-декай learning rate по шагам оптимизатора
+        warmup_epochs: число эпох линейного разгона lr перед декаем
         workers: число воркеров DataLoader
         max_steps: ограничение числа шагов (0 — без ограничения)
         seed: сид обучения
@@ -252,6 +282,8 @@ def train(
         raise ValueError(f"accum must be >= 1, got {accum}")
     if ema and not 0.0 < ema_decay < 1.0:
         raise ValueError(f"ema_decay must be in (0, 1), got {ema_decay}")
+    if warmup_epochs < 0:
+        raise ValueError(f"warmup_epochs must be >= 0, got {warmup_epochs}")
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -301,14 +333,14 @@ def train(
                     average.mul_(ema_decay).add_(tensor.detach(), alpha=1.0 - ema_decay)
 
     steps_per_epoch = max(1, math.ceil(len(dataset) / batch))
-    optimizer_steps = max(1, math.ceil(steps_per_epoch * epochs / accum))
+    optimizer_steps_per_epoch = max(1, math.ceil(steps_per_epoch / accum))
+    optimizer_steps = optimizer_steps_per_epoch * epochs
     if max_steps:
         optimizer_steps = min(optimizer_steps, max(1, math.ceil(max_steps / accum)))
-    scheduler = None
-    if cosine:
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=max(1, optimizer_steps), eta_min=0.0
-        )
+    warmup_steps = min(
+        warmup_epochs * optimizer_steps_per_epoch, max(0, optimizer_steps - 1)
+    )
+    scheduler = _make_scheduler(optimizer, optimizer_steps, warmup_steps, cosine)
     run_dir = config.edgeattn_experiments_path / run_name
     weights_dir = run_dir / "weights"
     weights_dir.mkdir(parents=True, exist_ok=True)
@@ -346,6 +378,7 @@ def train(
         "augment": augment,
         "seed": seed,
         "max_steps": max_steps,
+        "warmup_epochs": warmup_epochs,
         "scheduler": "cosine" if cosine else "const",
     }
     run = None
@@ -565,6 +598,7 @@ def cmd_train(
     eval_samples_train: int = 0,
     eval_tiled: bool = False,
     cosine: bool = False,
+    warmup_epochs: int = 0,
     workers: int = 0,
     max_steps: int = 0,
 ) -> None:
@@ -585,6 +619,7 @@ def cmd_train(
         eval_samples_train: число train-кадров для PQ (0 — не считать)
         eval_tiled: считать PQ тайловым инференсом
         cosine: косинус-декай learning rate по шагам оптимизатора
+        warmup_epochs: число эпох линейного разгона lr перед декаем
         workers: число воркеров DataLoader
         max_steps: ограничение числа шагов (0 — без ограничения)
     """
@@ -604,6 +639,7 @@ def cmd_train(
         eval_samples_train=eval_samples_train,
         eval_tiled=eval_tiled,
         cosine=cosine,
+        warmup_epochs=warmup_epochs,
         workers=workers,
         max_steps=max_steps,
     )

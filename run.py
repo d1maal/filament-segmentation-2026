@@ -39,6 +39,7 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
                 eval_samples_train=edgeattn_args.eval_samples_train,
                 eval_tiled=edgeattn_args.eval_tiled,
                 cosine=edgeattn_args.cosine,
+                warmup_epochs=edgeattn_args.warmup_epochs,
                 workers=edgeattn_args.workers,
                 max_steps=edgeattn_args.max_steps,
             )
