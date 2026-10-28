@@ -70,7 +70,7 @@ def union_masks(masks: list[np.ndarray], shape: tuple[int, int]) -> np.ndarray:
 
 
 class SemanticMagfilo(Magfilo):
-    """MAGFiLO для семантической сегментации: цель — union масок инстансов."""    
+    """MAGFiLO для семантической сегментации: цель — union масок инстансов."""
 
     def __init__(
         self,
@@ -121,7 +121,7 @@ class SemanticMagfilo(Magfilo):
 
 
 def unique_val_items() -> list[tuple]:
-    """Возвращает val-элементы без дублей наблюдений (по stem файла).
+    """Возвращает val-элементы без дублей наблюдений.
     returns:
         список кортежей (coco, info, path) по одному на физический снимок
     """

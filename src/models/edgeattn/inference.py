@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -119,6 +120,75 @@ def predict_probability(
     return (accum / np.maximum(counts, 1.0))[:h, :w]
 
 
+def _identity(image: np.ndarray) -> np.ndarray:
+    """Возвращает изображение без изменений.
+    params:
+        image: входной массив
+    returns:
+        тот же массив
+    """
+    return image
+
+
+def _rot180(image: np.ndarray) -> np.ndarray:
+    """Поворачивает изображение на 180 градусов.
+    params:
+        image: входной массив
+    returns:
+        повёрнутый массив
+    """
+    return np.rot90(image, 2)
+
+
+TTA_TRANSFORMS: tuple[Callable[[np.ndarray], np.ndarray], ...] = (
+    _identity,
+    np.fliplr,
+    np.flipud,
+    _rot180,
+)
+
+
+@torch.no_grad()
+def predict_probability_tta(
+    model: torch.nn.Module,
+    gray: np.ndarray,
+    device: torch.device,
+    size: int,
+    in_ch: int,
+    tiled: bool = False,
+    tile_size: int = 512,
+    tile_overlap: int = 128,
+) -> np.ndarray:
+    """Считает карту вероятностей с усреднением по TTA-трансформациям.
+    params:
+        model: модель EdgeAttNet
+        gray: grayscale-изображение (H, W)
+        device: устройство
+        size: сторона входа при инференсе без тайлов
+        in_ch: число каналов модели
+        tiled: тайловый инференс с усреднением вероятностей
+        tile_size: сторона тайла
+        tile_overlap: перекрытие тайлов
+    returns:
+        float32-карта вероятностей (H, W)
+    """
+    accum = np.zeros(gray.shape, dtype=np.float32)
+    for transform in TTA_TRANSFORMS:
+        image = np.ascontiguousarray(transform(gray))
+        prob = predict_probability(
+            model,
+            image,
+            device,
+            size=size,
+            in_ch=in_ch,
+            tiled=tiled,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+        )
+        accum += transform(prob)
+    return (accum / len(TTA_TRANSFORMS)).astype(np.float32)
+
+
 def load_checkpoint(
     weights: Path | None = None,
 ) -> tuple[Path, dict, torch.nn.Module, torch.device]:
@@ -159,6 +229,7 @@ def _predict_labels(
     tiled: bool,
     tile_size: int,
     tile_overlap: int,
+    tta: bool = False,
 ) -> np.ndarray:
     """Считает вероятности и превращает их в карту меток.
     params:
@@ -171,10 +242,12 @@ def _predict_labels(
         tiled: тайловый инференс
         tile_size: сторона тайла
         tile_overlap: перекрытие
+        tta: усреднять вероятности по TTA-трансформациям
     returns:
         карта меток int32
     """
-    prob = predict_probability(
+    predict = predict_probability_tta if tta else predict_probability
+    prob = predict(
         model,
         gray,
         device,
@@ -199,6 +272,7 @@ def _eval_rows(
     tile_overlap: int,
     desc: str,
     leave: bool = True,
+    tta: bool = False,
 ) -> list[dict]:
     """Считает покартинные метрики на наборе val/train-изображений.
     params:
@@ -213,6 +287,7 @@ def _eval_rows(
         tile_overlap: перекрытие
         desc: подпись прогресс-бара
         leave: оставлять ли бар после завершения
+        tta: усреднять вероятности по TTA-трансформациям
     returns:
         список словарей метрик с добавленным stem
     """
@@ -231,6 +306,7 @@ def _eval_rows(
             tiled,
             tile_size,
             tile_overlap,
+            tta=tta,
         )
         metrics = panoptic_quality_from_labels(
             instances_for_image(coco, info["id"]), labels
@@ -272,6 +348,7 @@ def _save_worst(
     tiled: bool,
     tile_size: int,
     tile_overlap: int,
+    tta: bool = False,
 ) -> None:
     """Сохраняет худшие по PQ кадры с overlay GT/pred.
     params:
@@ -286,6 +363,7 @@ def _save_worst(
         tiled: тайловый инференс
         tile_size: сторона тайла
         tile_overlap: перекрытие
+        tta: усреднять вероятности по TTA-трансформациям
     """
     if count <= 0:
         return
@@ -313,6 +391,7 @@ def _save_worst(
             tiled,
             tile_size,
             tile_overlap,
+            tta=tta,
         )
         vis = _draw_overlay(
             gray,
@@ -336,6 +415,7 @@ def cmd_infer(
     tile_size: int,
     tile_overlap: int,
     limit: int,
+    tta: bool = False,
 ) -> None:
     """Считает инстансы по val, пишет метрики и опционально submission CSV.
     params:
@@ -348,14 +428,17 @@ def cmd_infer(
         tile_size: сторона тайла
         tile_overlap: перекрытие тайлов
         limit: ограничить число val- и test-изображений (0 — все)
+        tta: усреднять вероятности по TTA-трансформациям
     """
     weights, checkpoint, model, device = load_checkpoint(weights)
     items = unique_val_items()
     if limit > 0:
         items = items[:limit]
     mode = "tiled" if tiled else "full"
+    tta_text = " | tta" if tta else ""
     print(
-        f"infer val: {len(items)} images | mode={mode} | score={score_thr} | min_area={min_area}",
+        f"infer val: {len(items)} images | mode={mode} | score={score_thr} "
+        f"| min_area={min_area}{tta_text}",
         flush=True,
     )
     rows = _eval_rows(
@@ -369,6 +452,7 @@ def cmd_infer(
         tile_size,
         tile_overlap,
         desc="infer",
+        tta=tta,
     )
     summary = _summary(rows)
     out_dir = config.edgeattn_path
@@ -384,6 +468,7 @@ def cmd_infer(
                     "score_thr": score_thr,
                     "min_area": min_area,
                     "tiled": tiled,
+                    "tta": tta,
                     "images": len(items),
                 },
                 "summary": summary,
@@ -406,6 +491,7 @@ def cmd_infer(
         tiled,
         tile_size,
         tile_overlap,
+        tta=tta,
     )
     if submit:
         paths = sorted(
@@ -430,6 +516,7 @@ def cmd_infer(
                 tiled,
                 tile_size,
                 tile_overlap,
+                tta=tta,
             )
             for i, mask in enumerate(instances_from_labels(labels), start=1):
                 csv_rows.append(

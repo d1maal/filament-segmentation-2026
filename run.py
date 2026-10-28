@@ -30,11 +30,15 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
                 size=edgeattn_args.size,
                 epochs=edgeattn_args.epochs,
                 batch=edgeattn_args.batch,
+                accum=edgeattn_args.accum,
+                ema=edgeattn_args.ema,
+                ema_decay=edgeattn_args.ema_decay,
                 lr=edgeattn_args.lr,
                 run_name=edgeattn_args.run_name,
                 eval_samples_val=edgeattn_args.eval_samples_val,
                 eval_samples_train=edgeattn_args.eval_samples_train,
                 eval_tiled=edgeattn_args.eval_tiled,
+                cosine=edgeattn_args.cosine,
                 workers=edgeattn_args.workers,
                 max_steps=edgeattn_args.max_steps,
             )
@@ -49,6 +53,7 @@ def run_m2f_cli(argv: list[str] | None = None) -> None:
                 tile_size=edgeattn_args.tile_size,
                 tile_overlap=edgeattn_args.tile_overlap,
                 limit=edgeattn_args.limit,
+                tta=edgeattn_args.tta,
             )
         else:
             raise SystemExit(f"unknown edgeattn command: {edgeattn_args.cmd}")

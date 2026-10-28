@@ -12,6 +12,7 @@ from src.models.edgeattn.inference import (
     load_checkpoint,
     mask_to_labels,
     predict_probability,
+    predict_probability_tta,
 )
 from src.models.edgeattn.losses import bce_dice_loss
 from src.models.edgeattn.parsers import build_parser
@@ -38,6 +39,7 @@ __all__ = [
     "normalize_hwc",
     "panoptic_quality_from_labels",
     "predict_probability",
+    "predict_probability_tta",
     "train",
     "train_items",
     "union_masks",

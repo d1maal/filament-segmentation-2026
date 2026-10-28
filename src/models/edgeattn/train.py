@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
 import random
 import time
 from pathlib import Path
@@ -201,11 +202,15 @@ def train(
     size: int = 512,
     epochs: int = 8,
     batch: int = 8,
+    accum: int = 1,
+    ema: bool = False,
+    ema_decay: float = 0.99,
     lr: float = 1e-4,
     run_name: str = "edgeattn",
     eval_samples_val: int = 0,
     eval_samples_train: int = 0,
     eval_tiled: bool = False,
+    cosine: bool = False,
     workers: int = 0,
     max_steps: int = 0,
     seed: int = DATA_SEED,
@@ -222,11 +227,15 @@ def train(
         size: сторона обучающего кропа
         epochs: число эпох
         batch: размер батча
+        accum: число батчей на один шаг оптимизатора
+        ema: вести экспоненциальное среднее весов
+        ema_decay: коэффициент затухания EMA
         lr: скорость обучения
         run_name: имя MLflow-run
         eval_samples_val: число val-кадров для PQ (0 — все)
         eval_samples_train: число train-кадров для PQ (0 — не считать)
         eval_tiled: считать PQ тайловым инференсом
+        cosine: косинус-декай learning rate по шагам оптимизатора
         workers: число воркеров DataLoader
         max_steps: ограничение числа шагов (0 — без ограничения)
         seed: сид обучения
@@ -239,6 +248,10 @@ def train(
         путь к last.pt
     """
     _mute_loggers()
+    if accum < 1:
+        raise ValueError(f"accum must be >= 1, got {accum}")
+    if ema and not 0.0 < ema_decay < 1.0:
+        raise ValueError(f"ema_decay must be in (0, 1), got {ema_decay}")
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -257,9 +270,45 @@ def train(
         arch=arch, in_ch=in_ch, base=base, blocks=blocks, heads=heads, dropout=dropout
     ).to(device)
     n_params = count_params(model)
+    ema_state: dict[str, torch.Tensor] | None = None
+    ema_model: torch.nn.Module | None = None
+    if ema:
+        ema_state = {
+            name: tensor.detach().clone()
+            for name, tensor in model.state_dict().items()
+            if tensor.is_floating_point()
+        }
+        ema_model = build_arch(
+            arch=arch,
+            in_ch=in_ch,
+            base=base,
+            blocks=blocks,
+            heads=heads,
+            dropout=dropout,
+        ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     use_amp = device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
+    def _update_ema() -> None:
+        """Обновляет EMA весов после шага оптимизатора."""
+        if ema_state is None:
+            return
+        with torch.no_grad():
+            for name, tensor in model.state_dict().items():
+                average = ema_state.get(name)
+                if average is not None:
+                    average.mul_(ema_decay).add_(tensor.detach(), alpha=1.0 - ema_decay)
+
+    steps_per_epoch = max(1, math.ceil(len(dataset) / batch))
+    optimizer_steps = max(1, math.ceil(steps_per_epoch * epochs / accum))
+    if max_steps:
+        optimizer_steps = min(optimizer_steps, max(1, math.ceil(max_steps / accum)))
+    scheduler = None
+    if cosine:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=max(1, optimizer_steps), eta_min=0.0
+        )
     run_dir = config.edgeattn_experiments_path / run_name
     weights_dir = run_dir / "weights"
     weights_dir.mkdir(parents=True, exist_ok=True)
@@ -281,6 +330,10 @@ def train(
         "n_params": n_params,
         "epochs": epochs,
         "batch": batch,
+        "accum": accum,
+        "effective_batch": batch * accum,
+        "ema": ema,
+        "ema_decay": ema_decay,
         "optimizer": "Adam",
         "lr": lr,
         "dataset": "MAGFiLO 1.0 (Kaggle 2026)",
@@ -293,6 +346,7 @@ def train(
         "augment": augment,
         "seed": seed,
         "max_steps": max_steps,
+        "scheduler": "cosine" if cosine else "const",
     }
     run = None
     if init_dagshub():
@@ -305,6 +359,7 @@ def train(
     history: dict = {"train_loss": [], "val_pq": [], "train_pq": []}
     rows_csv: list[dict] = []
     best_pq = -1.0
+    best_ema_pq = -1.0
     total_steps = 0
     stop = False
     ckpt_path = run_dir / "last.pt"
@@ -312,25 +367,42 @@ def train(
         for epoch in range(1, epochs + 1):
             started = time.time()
             model.train()
+            epoch_lr = float(optimizer.param_groups[0]["lr"])
+            current_lr = epoch_lr
             running, seen = 0.0, 0
+            step_in_group = 0
             pbar = tqdm(loader, desc=f"epoch {epoch} [crop]")
             for sample in pbar:
+                if step_in_group == 0:
+                    optimizer.zero_grad(set_to_none=True)
                 images = sample["image"].to(device, non_blocking=True)
                 targets = sample["target"].to(device, non_blocking=True)
-                optimizer.zero_grad(set_to_none=True)
                 with torch.amp.autocast("cuda", enabled=use_amp):
                     logits = model(images)
-                loss = bce_dice_loss(logits.float(), targets)
+                loss = bce_dice_loss(logits.float(), targets) / accum
                 scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-                running += float(loss.detach())
+                running += float(loss.detach()) * accum
                 seen += 1
                 total_steps += 1
-                pbar.set_postfix(loss=f"{running / seen:.4f}", lr=f"{lr:.1e}")
+                step_in_group += 1
+                if step_in_group == accum:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    if scheduler is not None:
+                        scheduler.step()
+                    _update_ema()
+                    step_in_group = 0
+                current_lr = scheduler.get_last_lr()[0] if scheduler is not None else lr
+                pbar.set_postfix(loss=f"{running / seen:.4f}", lr=f"{current_lr:.1e}")
                 if max_steps and total_steps >= max_steps:
                     stop = True
                     break
+            if step_in_group:
+                scaler.step(optimizer)
+                scaler.update()
+                if scheduler is not None:
+                    scheduler.step()
+                _update_ema()
             avg_loss = running / max(seen, 1)
             bundle = {
                 "model": model.state_dict(),
@@ -356,6 +428,31 @@ def train(
                 size // 4,
                 "eval val PQ",
             )
+            val_pq_ema = None
+            if ema_state is not None and ema_model is not None:
+                live = {
+                    name: tensor.detach().clone()
+                    for name, tensor in model.state_dict().items()
+                }
+                live.update(ema_state)
+                ema_model.load_state_dict(live)
+                ema_bundle = {
+                    key: value for key, value in bundle.items() if key != "model"
+                }
+                ema_bundle["model"] = ema_model.state_dict()
+                val_pq_ema, _ = _eval_items(
+                    ema_model,
+                    ema_bundle,
+                    device,
+                    eval_val,
+                    eval_tiled,
+                    size,
+                    size // 4,
+                    "eval val PQ (EMA)",
+                )
+                if val_pq_ema > best_ema_pq:
+                    best_ema_pq = val_pq_ema
+                    torch.save(ema_bundle, run_dir / "best_ema.pt")
             train_pq = None
             if eval_train:
                 train_pq, _ = _eval_items(
@@ -375,9 +472,11 @@ def train(
                 best_pq = val_pq
                 torch.save(bundle, run_dir / "best.pt")
             if run is not None:
-                metrics = {"train_loss": avg_loss, "val_pq": val_pq}
+                metrics = {"train_loss": avg_loss, "val_pq": val_pq, "lr": epoch_lr}
                 if train_pq is not None:
                     metrics["train_pq"] = train_pq
+                if val_pq_ema is not None:
+                    metrics["val_pq_ema"] = val_pq_ema
                 mlflow.log_metrics(metrics, step=epoch)
             rows_csv.append(
                 {
@@ -385,12 +484,16 @@ def train(
                     "train_loss": avg_loss,
                     "train_pq": train_pq,
                     "val_pq": val_pq,
+                    "lr": epoch_lr,
+                    "val_pq_ema": val_pq_ema,
                 }
             )
             train_pq_text = f"{train_pq:.4f}" if train_pq is not None else "n/a"
+            ema_text = f" val_pq_ema={val_pq_ema:.4f}" if val_pq_ema is not None else ""
             print(
                 f"epoch {epoch} loss={avg_loss:.4f} train_pq={train_pq_text} "
-                f"val_pq={val_pq:.4f} lr={lr:.1e} time={time.time() - started:.1f}s"
+                f"val_pq={val_pq:.4f}{ema_text} lr={current_lr:.1e} "
+                f"time={time.time() - started:.1f}s"
             )
             model.train()
             if stop:
@@ -398,7 +501,15 @@ def train(
         csv_path = run_dir / "metrics.csv"
         with csv_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(
-                handle, fieldnames=["epoch", "train_loss", "train_pq", "val_pq"]
+                handle,
+                fieldnames=[
+                    "epoch",
+                    "train_loss",
+                    "train_pq",
+                    "val_pq",
+                    "lr",
+                    "val_pq_ema",
+                ],
             )
             writer.writeheader()
             writer.writerows(rows_csv)
@@ -445,11 +556,15 @@ def cmd_train(
     size: int = 512,
     epochs: int = 8,
     batch: int = 8,
+    accum: int = 1,
+    ema: bool = False,
+    ema_decay: float = 0.99,
     lr: float = 1e-4,
     run_name: str = "edgeattn",
     eval_samples_val: int = 0,
     eval_samples_train: int = 0,
     eval_tiled: bool = False,
+    cosine: bool = False,
     workers: int = 0,
     max_steps: int = 0,
 ) -> None:
@@ -461,11 +576,15 @@ def cmd_train(
         size: сторона обучающего кропа
         epochs: число эпох
         batch: размер батча
+        accum: число батчей на один шаг оптимизатора
+        ema: вести экспоненциальное среднее весов
+        ema_decay: коэффициент затухания EMA
         lr: скорость обучения
         run_name: имя MLflow-run
         eval_samples_val: число val-кадров для PQ (0 — все)
         eval_samples_train: число train-кадров для PQ (0 — не считать)
         eval_tiled: считать PQ тайловым инференсом
+        cosine: косинус-декай learning rate по шагам оптимизатора
         workers: число воркеров DataLoader
         max_steps: ограничение числа шагов (0 — без ограничения)
     """
@@ -476,11 +595,15 @@ def cmd_train(
         size=size,
         epochs=epochs,
         batch=batch,
+        accum=accum,
+        ema=ema,
+        ema_decay=ema_decay,
         lr=lr,
         run_name=run_name,
         eval_samples_val=eval_samples_val,
         eval_samples_train=eval_samples_train,
         eval_tiled=eval_tiled,
+        cosine=cosine,
         workers=workers,
         max_steps=max_steps,
     )

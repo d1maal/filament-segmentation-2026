@@ -18,11 +18,15 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--size", type=int, default=512)
     t.add_argument("--epochs", type=int, default=8)
     t.add_argument("--batch", type=int, default=8)
+    t.add_argument("--accum", type=int, default=1)
+    t.add_argument("--ema", action="store_true")
+    t.add_argument("--ema-decay", type=float, default=0.99)
     t.add_argument("--lr", type=float, default=1e-4)
     t.add_argument("--run-name", type=str, default="edgeattn")
     t.add_argument("--eval-samples-val", type=int, default=0)
     t.add_argument("--eval-samples-train", type=int, default=0)
     t.add_argument("--eval-tiled", action="store_true")
+    t.add_argument("--cosine", action="store_true")
     t.add_argument("--workers", type=int, default=0)
     t.add_argument("--max-steps", type=int, default=0)
 
@@ -35,5 +39,6 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--tiled", action="store_true")
     i.add_argument("--tile-size", type=int, default=512)
     i.add_argument("--tile-overlap", type=int, default=128)
+    i.add_argument("--tta", action="store_true")
     i.add_argument("--limit", type=int, default=0)
     return p
