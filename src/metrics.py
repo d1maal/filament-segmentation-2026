@@ -4,7 +4,7 @@ import numpy as np
 
 
 def _iou(a: np.ndarray, b: np.ndarray) -> float:
-    """Считает метрику Intersection over Union для двух бинарных масок.
+    """Подсчёт метрики Intersection over Union для двух бинарных масок.
     params:
         a: первая бинарная маска
         b: вторая бинарная маска
@@ -19,7 +19,7 @@ def _iou(a: np.ndarray, b: np.ndarray) -> float:
 def panoptic_quality(
     gt: list[np.ndarray], pred: list[np.ndarray], thr: float = 0.5
 ) -> dict:
-    """Считает Panoptic Quality между предсказанием и истинной разметкой.
+    """Подсчёт Panoptic Quality между предсказанием и истинной разметкой.
     params:
         gt: список истинных масок
         pred: список предсказанных масок
@@ -70,7 +70,7 @@ def panoptic_quality(
 
 
 def aggregate(rows: list[dict]) -> dict:
-    """Собирает общую метрику PQ по всем изображениям, взвешивая по числу экземляров.
+    """Агрегация общей метрики PQ по всем изображениям с взвешиванием по числу экземпляров.
     params:
         rows: список словарей метрик от panoptic_quality
     returns:

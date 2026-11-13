@@ -46,7 +46,7 @@ def _merge_candidates(
     overlap_thr: float,
     min_area: int,
 ) -> list[np.ndarray]:
-    """Склеивает перекрывающиеся детекции с разных тайлов.
+    """Склеивание перекрывающихся детекций с разных тайлов.
     params:
         candidates: пары (маска, скор)
         overlap_thr: порог сходства для слияния
@@ -59,7 +59,10 @@ def _merge_candidates(
         matched = False
         for i, (kept, kept_score) in enumerate(merged):
             if _mask_similarity(mask, kept) >= overlap_thr:
-                merged[i] = (np.logical_or(mask, kept).astype(np.uint8), max(score, kept_score))
+                merged[i] = (
+                    np.logical_or(mask, kept).astype(np.uint8),
+                    max(score, kept_score),
+                )
                 matched = True
                 break
         if not matched:

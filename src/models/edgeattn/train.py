@@ -43,16 +43,15 @@ VIZ_TOP_K = 5
 
 
 def _mute_loggers() -> None:
-    """Приглушает сторонние логгеры до WARNING на время обучения."""
     for name in ("transformers", "PIL", "matplotlib"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def _sample(items: list[tuple], limit: int, seed: int) -> list[tuple]:
-    """Случайно ограничивает набор элементов.
+    """Случайное ограничение набора элементов.
     params:
         items: исходный список
-        limit: сколько оставить (0 — все)
+        limit: сколько оставить
         seed: сид выбора
     returns:
         выбранные элементы
@@ -72,7 +71,7 @@ def _eval_items(
     tile_overlap: int,
     desc: str,
 ) -> tuple[float, list[dict]]:
-    """Считает Home PQ на наборе изображений.
+    """Подсчет Home PQ на наборе изображений.
     params:
         model: модель
         checkpoint: чекпоинт с size/in_ch
@@ -102,7 +101,7 @@ def _eval_items(
 
 
 def _plot_history(history: dict, path: Path) -> None:
-    """Строит и сохраняет графики loss/PQ по эпохам.
+    """Отрисовка и сохранение графиков loss/PQ по эпохам.
     params:
         history: словари train_loss, val_pq, train_pq
         path: куда сохранить PNG
@@ -144,7 +143,7 @@ def _save_viz(
     tile_size: int,
     tile_overlap: int,
 ) -> None:
-    """Сохраняет лучшие и худшие кадры с overlay GT/pred.
+    """Сохранение лучших и худших кадров с отрисовкой GT/pred.
     params:
         model: модель
         checkpoint: чекпоинт
@@ -202,7 +201,7 @@ def _make_scheduler(
     warmup_steps: int,
     cosine: bool,
 ) -> torch.optim.lr_scheduler.LambdaLR | None:
-    """Создаёт расписание lr: линейный warmup и опциональный косинус-декай.
+    """Создание "расписания" lr: линейный warmup и опциональный косинус-декай.
     params:
         optimizer: оптимизатор
         total_steps: общее число шагов оптимизатора
@@ -249,7 +248,7 @@ def train(
     dropout: float = 0.1,
     augment: bool = True,
 ) -> Path:
-    """Обучает EdgeAttNet на MAGFiLO и логирует run в DagsHub.
+    """Обучение EdgeAttNet на MAGFiLO и логирование в DagsHub.
     params:
         arch: вариант архитектуры (unet или edgeattn)
         in_ch: число каналов входного изображения
@@ -602,7 +601,7 @@ def cmd_train(
     workers: int = 0,
     max_steps: int = 0,
 ) -> None:
-    """Запускает обучение EdgeAttNet из CLI.
+    """Запуск обучения EdgeAttNet из CLI.
     params:
         arch: вариант архитектуры (unet или edgeattn)
         in_ch: число каналов входного изображения

@@ -8,8 +8,10 @@ from src.data import three_channel
 from src.models.m2f.tiling import _merge_candidates, _tile_starts
 
 
-def _instances_from_result(result: dict, score_thr: float, min_area: int) -> list[tuple[np.ndarray, float]]:
-    """Достаёт маски и скоры из выхода post_process_instance_segmentation.
+def _instances_from_result(
+    result: dict, score_thr: float, min_area: int
+) -> list[tuple[np.ndarray, float]]:
+    """Извлечение масок и скоров из выхода post_process_instance_segmentation.
     params:
         result: словарь сегментации процессора
         score_thr: минимальный скор
@@ -43,7 +45,9 @@ def _instances_from_result(result: dict, score_thr: float, min_area: int) -> lis
 
 
 @torch.no_grad()
-def _predict_scored(model, processor, image: np.ndarray, device, score_thr: float, min_area: int = 0):
+def _predict_scored(
+    model, processor, image: np.ndarray, device, score_thr: float, min_area: int = 0
+):
     """Инференс одного изображения со скорами.
     params:
         model: модель Mask2Former
@@ -79,7 +83,7 @@ def predict_masks(
     score_thr: float = 0.3,
     min_area: int = 80,
 ) -> list[np.ndarray]:
-    """Делает инференс модели на одном полном изображении.
+    """Инференс модели на одном полном изображении.
     params:
         model: обученная модель Mask2Former
         processor: процессор Mask2Former
@@ -90,7 +94,12 @@ def predict_masks(
     returns:
         список бинарных масок инстансов
     """
-    return [mask for mask, _ in _predict_scored(model, processor, image, device, score_thr, min_area)]
+    return [
+        mask
+        for mask, _ in _predict_scored(
+            model, processor, image, device, score_thr, min_area
+        )
+    ]
 
 
 @torch.no_grad()
@@ -131,7 +140,9 @@ def predict_masks_tiled(
         for x in _tile_starts(w, tile_size, overlap):
             tile = gray[y : min(y + tile_size, h), x : min(x + tile_size, w)]
             tile_h, tile_w = tile.shape[:2]
-            for mask, score in _predict_scored(model, processor, tile, device, score_thr, 0):
+            for mask, score in _predict_scored(
+                model, processor, tile, device, score_thr, 0
+            ):
                 ys_mask, xs_mask = np.where(mask > 0)
                 if not len(xs_mask):
                     continue
@@ -141,7 +152,10 @@ def predict_masks_tiled(
                 left = 0 if x == 0 else margin
                 bottom = 0 if y + tile_h >= h else margin
                 right = 0 if x + tile_w >= w else margin
-                if not (top <= center_y < tile_h - bottom and left <= center_x < tile_w - right):
+                if not (
+                    top <= center_y < tile_h - bottom
+                    and left <= center_x < tile_w - right
+                ):
                     continue
                 full = np.zeros((h, w), dtype=np.uint8)
                 full[y : y + tile_h, x : x + tile_w] = mask
@@ -184,7 +198,9 @@ def predict_masks_grid(
             target_sizes=[(h, w)],
             return_binary_maps=True,
         )[0]
-        masks = [mask for mask, _ in _instances_from_result(result, float(score_thr), 0)]
+        masks = [
+            mask for mask, _ in _instances_from_result(result, float(score_thr), 0)
+        ]
         areas = [int(mask.sum()) for mask in masks]
         for min_area in min_areas:
             predictions[(float(score_thr), int(min_area))] = [
@@ -205,7 +221,7 @@ def _predict(
     tile_overlap: int,
     merge_overlap: float,
 ):
-    """Выбирает полный инференс или тайловый.
+    """Выбор полного или тайлового инференса.
     params:
         model: модель Mask2Former
         processor: процессор
@@ -232,4 +248,6 @@ def _predict(
             overlap=tile_overlap,
             merge_overlap=merge_overlap,
         )
-    return predict_masks(model, processor, image, device, score_thr=score_thr, min_area=min_area)
+    return predict_masks(
+        model, processor, image, device, score_thr=score_thr, min_area=min_area
+    )

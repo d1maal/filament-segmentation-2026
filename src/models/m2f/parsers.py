@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Строит CLI-парсер с подкомандами check, baseline, train, infer, sweep."""
+    """Построение CLI-парсера с подкомандами check, baseline, train, infer, sweep."""
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check")
@@ -37,7 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--limit", type=int, default=0)
     s = sub.add_parser("sweep")
     s.add_argument("--weights", type=Path, default=None)
-    s.add_argument("--score-thrs", type=float, nargs="+", default=[0.2, 0.3, 0.4, 0.5, 0.6])
+    s.add_argument(
+        "--score-thrs", type=float, nargs="+", default=[0.2, 0.3, 0.4, 0.5, 0.6]
+    )
     s.add_argument("--min-areas", type=int, nargs="+", default=[0, 40, 80, 160])
     s.add_argument("--limit", type=int, default=0)
     s.add_argument("--no-log", action="store_true")

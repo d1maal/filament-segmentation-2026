@@ -32,7 +32,7 @@ MAX_STEPS = 0
 
 @torch.no_grad()
 def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
-    """Считает Home PQ модели на валидационных изображениях.
+    """Подсчёт Home PQ модели на валидационных изображениях.
     params:
         model: обученная модель Mask2Former
         processor: процессор Mask2Former
@@ -58,7 +58,7 @@ def _eval_val(model, processor, device, eval_samples: int = 0) -> float:
 
 @torch.no_grad()
 def _eval_train(model, processor, device, eval_samples: int = 0) -> float:
-    """Считает Home PQ модели на тренировочных изображениях.
+    """Подсчёт Home PQ модели на тренировочных изображениях.
     params:
         model: обученная модель Mask2Former
         processor: процессор Mask2Former
@@ -135,7 +135,7 @@ def log_train(
     warmup_epochs: int = 2,
     backbone_lr_mult: float = 0.1,
 ) -> dict:
-    """Обучает Mask2Former на MAGFiLO и логирует эксперимент в DagsHub.
+    """Обучение Mask2Former на MAGFiLO с логированием эксперимента в DagsHub.
     params:
         size: сторона кропа при обучении
         epochs: число эпох
@@ -254,7 +254,9 @@ def log_train(
         mode = "full" if use_full else "crop"
         running, seen, step = 0.0, 0, 0
         opt.zero_grad()
-        for step, batch in enumerate(tqdm(loader, desc=f"epoch {epoch} [{mode}]"), start=1):
+        for step, batch in enumerate(
+            tqdm(loader, desc=f"epoch {epoch} [{mode}]"), start=1
+        ):
             with autocast():
                 loss = (
                     model(
@@ -288,7 +290,9 @@ def log_train(
         model.eval()
         val_pq = _eval_val(model, processor, device, eval_val_samples)
         train_pq = (
-            _eval_train(model, processor, device, eval_train_samples) if eval_train_samples else None
+            _eval_train(model, processor, device, eval_train_samples)
+            if eval_train_samples
+            else None
         )
         model.train()
         history["val_pq"].append(val_pq)
@@ -299,7 +303,12 @@ def log_train(
                 metrics["train_pq"] = train_pq
             mlflow.log_metrics(metrics, step=epoch)
         metrics_rows.append(
-            {"epoch": epoch, "train_loss": avg_loss, "train_pq": train_pq, "val_pq": val_pq}
+            {
+                "epoch": epoch,
+                "train_loss": avg_loss,
+                "train_pq": train_pq,
+                "val_pq": val_pq,
+            }
         )
         if val_pq > best_pq:
             best_pq = val_pq
@@ -349,7 +358,7 @@ def train(
     warmup_epochs: int = 2,
     backbone_lr_mult: float = 0.1,
 ) -> Path:
-    """Обучает Mask2Former на MAGFiLO через log_train и возвращает путь к last.pt.
+    """Обучение Mask2Former на MAGFiLO через log_train с возвратом пути к last.pt.
     params:
         те же, что у log_train
     returns:
@@ -392,7 +401,7 @@ def cmd_train(
     lr: float,
     backbone_lr_mult: float,
 ) -> None:
-    """Запускает обучение Mask2Former; в smoke-режиме — 1 эпоха и до 30 шагов.
+    """Запуск обучения Mask2Former; в smoke-режиме — 1 эпоха и до 30 шагов.
     params:
         smoke: короткий прогон
         size: сторона кропа

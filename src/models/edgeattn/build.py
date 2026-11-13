@@ -10,11 +10,6 @@ DEPTH = 16
 
 
 class EdgeAttnUNet(nn.Module):
-    """U-Net с edge-guided self-attention на bottleneck (EdgeAttNet).
-
-    При arch="unet" строится контрольная U-Net без attention и без edge-приора.
-    """
-
     def __init__(
         self,
         in_ch: int = 3,
@@ -24,7 +19,7 @@ class EdgeAttnUNet(nn.Module):
         heads: int = 4,
         dropout: float = 0.1,
     ) -> None:
-        """Создаёт сеть EdgeAttNet или контрольную U-Net.
+        """Создаёт сеть EdgeAttNet или U-Net.
         params:
             in_ch: число каналов входного изображения
             base: число каналов первой стадии энкодера
@@ -36,8 +31,6 @@ class EdgeAttnUNet(nn.Module):
         super().__init__()
         if arch not in ARCHS:
             raise ValueError(f"Unknown arch: {arch}. Use one of: {', '.join(ARCHS)}")
-        if in_ch < 1:
-            raise ValueError(f"in_ch must be positive, got {in_ch}")
         self.arch = arch
         c1, c2, c3, c4 = base, base * 2, base * 4, base * 8
         self.enc1 = DoubleConv(in_ch, c1)
@@ -60,7 +53,7 @@ class EdgeAttnUNet(nn.Module):
         self.out = nn.Conv2d(c1, 1, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Считает логиты сегментации.
+        """Подсчет логитов сегментации.
         params:
             x: изображение (B, in_ch, H, W), H и W кратны 16
         returns:
@@ -93,7 +86,7 @@ def build_arch(
     heads: int = 4,
     dropout: float = 0.1,
 ) -> EdgeAttnUNet:
-    """Собирает EdgeAttNet или контрольную U-Net.
+    """Сборка EdgeAttNet или U-Net.
     params:
         arch: вариант архитектуры (unet или edgeattn)
         in_ch: число каналов входного изображения
@@ -110,7 +103,7 @@ def build_arch(
 
 
 def count_params(model: nn.Module) -> int:
-    """Считает число обучаемых параметров модели.
+    """Подсчет числа обучаемых параметров модели.
     params:
         model: модель PyTorch
     returns:

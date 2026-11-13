@@ -28,7 +28,7 @@ DEPTH = 16
 def mask_to_labels(
     prob: np.ndarray, thr: float = 0.35, min_area: int = 0
 ) -> np.ndarray:
-    """Превращает карту вероятностей в карту меток инстансов.
+    """Перевод карты вероятностей в карту меток инстансов.
     params:
         prob: вероятность филамента (H, W) в [0, 1]
         thr: порог бинаризации
@@ -50,7 +50,7 @@ def mask_to_labels(
 
 
 def _check_tiling(tile_size: int, tile_overlap: int) -> None:
-    """Проверяет, что параметры тайлинга согласованы с сетью.
+    """Проверка, что параметры тайлинга согласованы с сетью.
     params:
         tile_size: сторона тайла
         tile_overlap: перекрытие тайлов
@@ -74,10 +74,10 @@ def predict_probability(
     tile_size: int = 512,
     tile_overlap: int = 128,
 ) -> np.ndarray:
-    """Считает карту вероятностей филаментов для целого диска.
+    """Подсчет карты вероятностей филаментов для целого диска.
     params:
         model: модель EdgeAttNet
-        gray: grayscale-изображение (H, W)
+        gray: grayscale-изображение
         device: устройство
         size: сторона входа при инференсе без тайлов
         in_ch: число каналов модели
@@ -85,7 +85,7 @@ def predict_probability(
         tile_size: сторона тайла
         tile_overlap: перекрытие тайлов
     returns:
-        float32-карта вероятностей (H, W)
+        float32-карта вероятностей
     """
     model.eval()
     h, w = gray.shape
@@ -133,7 +133,7 @@ def _identity(image: np.ndarray) -> np.ndarray:
 
 
 def _rot180(image: np.ndarray) -> np.ndarray:
-    """Поворачивает изображение на 180 градусов.
+    """Поврот изображения на 180 градусов.
     params:
         image: входной массив
     returns:
@@ -161,10 +161,10 @@ def predict_probability_tta(
     tile_size: int = 512,
     tile_overlap: int = 128,
 ) -> np.ndarray:
-    """Считает карту вероятностей с усреднением по TTA-трансформациям.
+    """Подсчет карты вероятностей с усреднением по TTA-трансформациям.
     params:
         model: модель EdgeAttNet
-        gray: grayscale-изображение (H, W)
+        gray: grayscale-изображение
         device: устройство
         size: сторона входа при инференсе без тайлов
         in_ch: число каналов модели
@@ -172,7 +172,7 @@ def predict_probability_tta(
         tile_size: сторона тайла
         tile_overlap: перекрытие тайлов
     returns:
-        float32-карта вероятностей (H, W)
+        float32-карта вероятностей
     """
     accum = np.zeros(gray.shape, dtype=np.float32)
     for transform in TTA_TRANSFORMS:
@@ -194,9 +194,9 @@ def predict_probability_tta(
 def load_checkpoint(
     weights: Path | None = None,
 ) -> tuple[Path, dict, torch.nn.Module, torch.device]:
-    """Загружает чекпоинт EdgeAttNet и собирает модель.
+    """Загрузка чекпоинтов EdgeAttNet и сборка модели.
     params:
-        weights: путь к .pt (по умолчанию best.pt run'а edgeattn)
+        weights: путь к .pt
     returns:
         weights, checkpoint, model, device
     """
@@ -233,12 +233,12 @@ def _predict_labels(
     tile_overlap: int,
     tta: bool = False,
 ) -> np.ndarray:
-    """Считает вероятности и превращает их в карту меток.
+    """Подсчет вероятностей и превращение их в карту меток.
     params:
         model: модель
         gray: grayscale-изображение
         device: устройство
-        checkpoint: чекпоинт (нужен size и in_ch)
+        checkpoint: чекпоинт
         score_thr: порог вероятности
         min_area: минимальная площадь инстанса
         tiled: тайловый инференс
@@ -276,7 +276,7 @@ def _eval_rows(
     leave: bool = True,
     tta: bool = False,
 ) -> list[dict]:
-    """Считает покартинные метрики на наборе val/train-изображений.
+    """Подсчет метрик на наборе val/train-изображений.
     params:
         model: модель
         checkpoint: чекпоинт
@@ -319,11 +319,11 @@ def _eval_rows(
 
 
 def _summary(rows: list[dict]) -> dict:
-    """Агрегирует PQ и добавляет SQ/RQ/precision/recall.
+    """Агрегация PQ и добавление SQ/RQ/precision/recall.
     params:
         rows: покартинные метрики
     returns:
-        сводный словарь
+        словарь с метриками
     """
     result = aggregate(rows)
     tp = int(result.get("tp", 0))
@@ -352,7 +352,7 @@ def _save_worst(
     tile_overlap: int,
     tta: bool = False,
 ) -> None:
-    """Сохраняет худшие по PQ кадры с overlay GT/pred.
+    """Сохранение худших по PQ кадров с отрисовкой GT/pred.
     params:
         rows: покартинные метрики
         items: те же элементы, что в infer
@@ -361,7 +361,7 @@ def _save_worst(
         device: устройство
         score_thr: порог вероятности
         min_area: минимальная площадь
-        count: сколько кадров сохранить (0 — ничего)
+        count: сколько кадров сохранить 
         tiled: тайловый инференс
         tile_size: сторона тайла
         tile_overlap: перекрытие
@@ -419,7 +419,7 @@ def cmd_infer(
     limit: int,
     tta: bool = False,
 ) -> None:
-    """Считает инстансы по val, пишет метрики и опционально submission CSV.
+    """Подсчет инстансов по val, запись метрик и опционально submission CSV.
     params:
         submit: генерация submission CSV по test-изображениям
         weights: чекпоинт (по умолчанию best.pt run'а edgeattn)

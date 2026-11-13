@@ -20,7 +20,7 @@ VAL_SEED = 42
 
 
 def three_channel(image: np.ndarray) -> np.ndarray:
-    """Преобразует grayscale-изображение в трёхканальное: исходное, усиленное CLAHE и high-pass слой, склеенные по глубине.
+    """Преобразование grayscale-изображения в трёхканальное: исходное, усиленное CLAHE и high-pass слой, склеенные по глубине.
     params:
         image: входное изображение
     returns:
@@ -40,7 +40,7 @@ def three_channel(image: np.ndarray) -> np.ndarray:
 
 
 def load_coco(path: Path = config.train_annotations) -> COCO:
-    """Загружает COCO-аннотации из JSON-файла.
+    """Загрузка COCO-аннотаций из JSON-файла.
     params:
         path: путь к файлу аннотаций
     returns:
@@ -50,7 +50,7 @@ def load_coco(path: Path = config.train_annotations) -> COCO:
 
 
 def image_stem(file_name: str) -> str:
-    """Возвращает имя файла без расширения.
+    """Извлечение имени файла без расширения.
     params:
         file_name: имя файла в формате COCO
     returns:
@@ -60,7 +60,7 @@ def image_stem(file_name: str) -> str:
 
 
 def resolve_image(images_dir: Path, file_name: str) -> Path | None:
-    """Ищет реальный файл изображения в папке.
+    """Поиск реального файла изображения в папке.
     params:
         images_dir: папка с изображениями
         file_name: имя файла из COCO
@@ -75,7 +75,7 @@ def resolve_image(images_dir: Path, file_name: str) -> Path | None:
 
 
 def decode_ann_mask(ann: dict, height: int, width: int) -> np.ndarray:
-    """Декодирует маску сегментации из аннотации COCO в бинарный массив нужного размера.
+    """Декодирование маски сегментации из аннотации COCO в бинарный массив нужного размера.
     params:
         ann: аннотация COCO
         height: высота изображения
@@ -103,7 +103,7 @@ def decode_ann_mask(ann: dict, height: int, width: int) -> np.ndarray:
 
 
 def instances_for_image(coco: COCO, image_id: int) -> list[np.ndarray]:
-    """Собирает все маски-инстансы для заданного изображения из аннотаций COCO.
+    """Сбор всех масок-инстансов заданного изображения из аннотаций COCO.
     params:
         coco: загруженный объект COCO
         image_id: идентификатор изображения
@@ -121,7 +121,7 @@ def instances_for_image(coco: COCO, image_id: int) -> list[np.ndarray]:
 
 
 def mask_to_rle_counts(mask: np.ndarray) -> str:
-    """Кодирует бинарную маску в строку RLE-счётчиков в формате pycocotools.
+    """Кодирование бинарной маски в строку RLE-счётчиков в формате pycocotools.
     params:
         mask: бинарная маска
     returns:
@@ -135,7 +135,7 @@ def mask_to_rle_counts(mask: np.ndarray) -> str:
 def ensure_val_split(
     coco: COCO, frac: float = VAL_FRAC, seed: int = VAL_SEED
 ) -> set[str]:
-    """Гарантирует существование фиксированного валидационного сплита.
+    """Обеспечение существования фиксированного валидационного сплита.
     params:
         coco: загруженный объект COCO
         frac: доля изображений, отдаваемая в валидацию

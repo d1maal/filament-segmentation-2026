@@ -23,7 +23,7 @@ def build(
     dice_weight: float = 5.0,
     mask_weight: float = 5.0,
 ):
-    """Собирает процессор и модель Mask2Former для сегментации филаментов.
+    """Сборка процессора и модели Mask2Former для сегментации филаментов.
     params:
         size: сторона входных квадратных изображений
         backbone: ключ чекпоинта (tiny или small)
@@ -34,7 +34,9 @@ def build(
         кортеж из процессора и модели
     """
     if backbone not in CHECKPOINTS:
-        raise ValueError(f"Unknown backbone: {backbone}. Use one of: {', '.join(CHECKPOINTS)}")
+        raise ValueError(
+            f"Unknown backbone: {backbone}. Use one of: {', '.join(CHECKPOINTS)}"
+        )
     ckpt = CHECKPOINTS[backbone]
     processor = Mask2FormerImageProcessor.from_pretrained(
         ckpt, size={"height": size, "width": size}
@@ -54,7 +56,7 @@ def build(
 
 
 def load_checkpoint(weights: Path | None = None):
-    """Загружает чекпоинт и собирает модель с теми же гиперпараметрами, что при train.
+    """Загрузка чекпоинта и сборка модели с теми же гиперпараметрами, что при train.
     params:
         weights: путь к .pt (по умолчанию last.pt)
     returns:
@@ -64,7 +66,9 @@ def load_checkpoint(weights: Path | None = None):
 
     weights = weights or (config.models_path / "last.pt")
     if not weights.exists():
-        raise SystemExit(f"No weights at {weights}. Run training first or pass --weights")
+        raise SystemExit(
+            f"No weights at {weights}. Run training first or pass --weights"
+        )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     try:
         checkpoint = torch.load(weights, map_location=device, weights_only=False)

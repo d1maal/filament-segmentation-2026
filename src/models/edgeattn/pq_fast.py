@@ -6,11 +6,7 @@ import numpy as np
 def panoptic_quality_from_labels(
     gt: list[np.ndarray], pred_labels: np.ndarray, thr: float = 0.5
 ) -> dict:
-    """Считает Home PQ по карте меток предсказания без попарных масок.
-
-    Семантика совпадает с src.metrics.panoptic_quality, но пересечения
-    считаются через bincount по меткам, что на 2048×2048 даёт ускорение
-    примерно в сто раз.
+    """Подсчет Home PQ по карте меток предсказания без попарных масок.
     params:
         gt: список истинных масок инстансов
         pred_labels: карта меток (0 — фон, 1..N — инстансы)
@@ -74,7 +70,7 @@ def panoptic_quality_from_labels(
 
 
 def instances_from_labels(labels: np.ndarray) -> list[np.ndarray]:
-    """Превращает карту меток в список бинарных масок инстансов.
+    """Перевод карты меток в список бинарных масок инстансов.
     params:
         labels: карта меток (0 — фон, 1..N — инстансы)
     returns:

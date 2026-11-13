@@ -11,7 +11,7 @@ load_dotenv(ROOT / ".env")
 
 
 def _discover_dataset_root() -> Path:
-    """Определяет корень датасета MAGFiLO.
+    """Определение корня датасета MAGFiLO.
     returns:
         путь к корню датасета
     """
@@ -36,7 +36,7 @@ def _discover_dataset_root() -> Path:
 
 
 def _discover_outputs_path() -> Path:
-    """Определяет папку для выходных артефактов.
+    """Определение папки для выходных артефактов.
     returns:
         путь к папке выходных артефактов
     """
@@ -47,7 +47,7 @@ def _discover_outputs_path() -> Path:
 
 @dataclass
 class DagshubConfig:
-    """Хранит настройки логирования экспериментов в DagsHub."""
+    """Хранение настроек логирования экспериментов в DagsHub."""
 
     repo_owner: str = os.environ.get("DAGSHUB_REPO_OWNER", "BraveCactus")
     repo_name: str = os.environ.get("DAGSHUB_REPO_NAME", "solar-filament-segmentation")
@@ -58,13 +58,13 @@ class DagshubConfig:
 
     @property
     def configured(self) -> bool:
-        """Возвращает признак того, что логирование настроено: владелец, репозиторий и токен заданы."""
+        """Признак того, что логирование настроено: владелец, репозиторий и токен заданы."""
         return bool(self.repo_owner and self.repo_name and self.token)
 
 
 @dataclass
 class TrainConfig:
-    """Хранит фиксированные гиперпараметры обучения Mask2Former."""
+    """Хранение фиксированных гиперпараметров обучения Mask2Former."""
 
     accum: int = 8
     augment: bool = True
@@ -77,7 +77,7 @@ class TrainConfig:
 
 @dataclass
 class Config:
-    """Хранит все пути проекта и настройки логирования в DagsHub."""
+    """Хранение всех путей проекта и настроек логирования в DagsHub."""
 
     root: Path = ROOT
     dataset_path: Path = field(default_factory=_discover_dataset_root)
@@ -98,7 +98,7 @@ class Config:
     train: TrainConfig = field(default_factory=TrainConfig)
 
     def __post_init__(self) -> None:
-        """Вычисляет производные пути из корня датасета и выходной папки."""
+        """Вычисление производных путей из корня датасета и выходной папки."""
         train = self.dataset_path / "train"
         anns = sorted(train.glob("*Annotations*.json"))
         annotations = (

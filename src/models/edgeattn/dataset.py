@@ -22,7 +22,7 @@ NORM_STD = 0.5
 
 
 def normalize_hwc(image: np.ndarray) -> np.ndarray:
-    """Нормирует изображение (H, W, C) из [0, 255] в [-1, 1].
+    """Нормировка изображения (H, W, C) из [0, 255] в [-1, 1].
     params:
         image: изображение uint8 (H, W, C)
     returns:
@@ -32,10 +32,10 @@ def normalize_hwc(image: np.ndarray) -> np.ndarray:
 
 
 def make_input(gray: np.ndarray, in_ch: int) -> np.ndarray:
-    """Готовит вход модели из grayscale-изображения.
+    """Подготовка изображения на вход модели из grayscale-изображения.
     params:
-        gray: grayscale-изображение (H, W)
-        in_ch: число каналов модели (1 — grayscale, 3 — raw/CLAHE/high-pass)
+        gray: grayscale-изображение
+        in_ch: число каналов модели
     returns:
         float32-массив (H, W, in_ch) в [-1, 1]
     """
@@ -51,7 +51,7 @@ def make_input(gray: np.ndarray, in_ch: int) -> np.ndarray:
 
 
 def union_masks(masks: list[np.ndarray], shape: tuple[int, int]) -> np.ndarray:
-    """Объединяет маски инстансов в одну бинарную карту.
+    """Объединение маски инстансов в одну бинарную карту.
     params:
         masks: список бинарных масок инстансов
         shape: целевое разрешение (H, W)
@@ -70,7 +70,7 @@ def union_masks(masks: list[np.ndarray], shape: tuple[int, int]) -> np.ndarray:
 
 
 class SemanticMagfilo(Magfilo):
-    """MAGFiLO для семантической сегментации: цель — union масок инстансов."""
+    """MAGFiLO для семантической сегментации"""
 
     def __init__(
         self,
@@ -81,14 +81,14 @@ class SemanticMagfilo(Magfilo):
         negative_crop_prob: float = 0.1,
         augment: bool = True,
     ) -> None:
-        """Создаёт семантический датасет по train-изображениям MAGFiLO.
+        """Создание семантического датасета по train-изображениям MAGFiLO.
         params:
-            in_ch: число входных каналов (1 — grayscale, 3 — raw/CLAHE/high-pass)
+            in_ch: число входных каналов
             size: сторона обучающего кропа
             min_area: минимальная площадь маски в кропе
             object_crop_prob: доля кропов вокруг филамента
             negative_crop_prob: доля пустых кропов
-            augment: геометрические аугментации (flip/повороты)
+            augment: геометрические аугментации
         """
         if in_ch not in (1, 3):
             raise ValueError(f"in_ch must be 1 or 3, got {in_ch}")
@@ -102,7 +102,7 @@ class SemanticMagfilo(Magfilo):
         self.in_ch = in_ch
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        """Возвращает кроп и его бинарную union-маску.
+        """Возвращение кропа и его бинарной union-маски.
         params:
             idx: индекс элемента
         returns:
@@ -121,9 +121,9 @@ class SemanticMagfilo(Magfilo):
 
 
 def unique_val_items() -> list[tuple]:
-    """Возвращает val-элементы без дублей наблюдений.
+    """Возвращение validation-элементов без дублей.
     returns:
-        список кортежей (coco, info, path) по одному на физический снимок
+        список кортежей (coco, info, path) по одному на снимок
     """
     seen: set[str] = set()
     items = []
@@ -137,7 +137,7 @@ def unique_val_items() -> list[tuple]:
 
 
 def train_items(limit: int = 0, seed: int = DATA_SEED) -> list[tuple]:
-    """Возвращает train-элементы без val и без дублей наблюдений.
+    """Возвращение train-элементов без validation и без дублей.
     params:
         limit: сколько изображений случайно оставить (0 — все)
         seed: сид выбора подмножества

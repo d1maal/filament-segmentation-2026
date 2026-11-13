@@ -15,7 +15,7 @@ OPEN_KERNEL = 3
 def predict_instances(
     image: np.ndarray, min_area: int = 80, max_instances: int = 150
 ) -> list[np.ndarray]:
-    """Выделяет экземпляры волокон на снимке: инвертирует H-alpha, оставляет солнечный диск, применяет порог Otsu и connected components.
+    """Выделение экземпляров волокон на снимке: инверсия H-alpha, ограничение солнечным диском, порог Otsu.
     params:
         image: grayscale-изображение (или BGR)
         min_area: минимальная площадь компоненты, попадающая в результат

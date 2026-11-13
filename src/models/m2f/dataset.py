@@ -31,7 +31,7 @@ class Magfilo(Dataset):
         negative_crop_prob: float = 0.1,
         augment: bool = True,
     ) -> None:
-        """Составляет список train-изображений, исключая валидационный сплит.
+        """Составление списка train-изображений без валидационного сплита.
         params:
             size: сторона кропа
             min_area: минимальная площадь маски в кропе
@@ -39,7 +39,11 @@ class Magfilo(Dataset):
             negative_crop_prob: доля пустых кропов
             augment: геометрические аугментации (flip/повороты)
         """
-        if object_crop_prob < 0 or negative_crop_prob < 0 or object_crop_prob + negative_crop_prob > 1:
+        if (
+            object_crop_prob < 0
+            or negative_crop_prob < 0
+            or object_crop_prob + negative_crop_prob > 1
+        ):
             raise ValueError("Crop probabilities must be >= 0 and sum to <= 1")
         self.size = size
         self.min_area = min_area
@@ -59,14 +63,14 @@ class Magfilo(Dataset):
                 self.rows.append((info, path))
 
     def __len__(self) -> int:
-        """Возвращает число изображений в датасете.
+        """Число изображений в датасете.
         returns:
             количество train-изображений
         """
         return len(self.rows)
 
     def set_full_image(self, enabled: bool) -> None:
-        """Включает или выключает обучение на полном диске вместо кропа.
+        """Включение или выключение обучения на полном диске вместо кропа.
         params:
             enabled: True — без кропа
         """
@@ -87,7 +91,7 @@ class Magfilo(Dataset):
     def _crop(
         self, image: np.ndarray, masks: list[np.ndarray], y: int, x: int
     ) -> tuple[np.ndarray, list[np.ndarray]]:
-        """Вырезает квадрат и оставляет маски с площадью не меньше min_area.
+        """Вырезание квадрата и отбор масок с площадью не меньше min_area.
         params:
             image: изображение
             masks: маски инстансов
@@ -119,8 +123,12 @@ class Magfilo(Dataset):
         target = valid[int(self.rng.randint(0, len(valid)))]
         ys, xs = np.where(target > 0)
         jitter = max(1, self.size // 8)
-        center_y = (int(ys.min()) + int(ys.max())) // 2 + int(self.rng.randint(-jitter, jitter + 1))
-        center_x = (int(xs.min()) + int(xs.max())) // 2 + int(self.rng.randint(-jitter, jitter + 1))
+        center_y = (int(ys.min()) + int(ys.max())) // 2 + int(
+            self.rng.randint(-jitter, jitter + 1)
+        )
+        center_x = (int(xs.min()) + int(xs.max())) // 2 + int(
+            self.rng.randint(-jitter, jitter + 1)
+        )
         y = int(np.clip(center_y - self.size // 2, 0, h - self.size))
         x = int(np.clip(center_x - self.size // 2, 0, w - self.size))
         return self._crop(image, masks, y, x)
@@ -128,7 +136,7 @@ class Magfilo(Dataset):
     def _negative_crop(
         self, image: np.ndarray, masks: list[np.ndarray]
     ) -> tuple[np.ndarray, list[np.ndarray]]:
-        """Пытается взять кроп без филаментов.
+        """Попытка получить кроп без филаментов.
         params:
             image: изображение
             masks: маски инстансов
@@ -148,7 +156,7 @@ class Magfilo(Dataset):
     def _augment(
         self, image: np.ndarray, masks: list[np.ndarray]
     ) -> tuple[np.ndarray, list[np.ndarray]]:
-        """Синхронно отражает и поворачивает изображение и маски.
+        """Синхронное отражение и поворот изображения и масок.
         params:
             image: изображение
             masks: маски инстансов
@@ -170,7 +178,7 @@ class Magfilo(Dataset):
         return np.ascontiguousarray(image), [np.ascontiguousarray(m) for m in masks]
 
     def __getitem__(self, idx: int) -> dict:
-        """Возвращает одно изображение и его маски.
+        """Возврат одного изображения и его масок.
         params:
             idx: индекс элемента
         returns:
@@ -198,7 +206,7 @@ class Magfilo(Dataset):
 
 
 def collate(processor, batch: list[dict]) -> dict:
-    """Кодирует батч изображений процессором и формирует целевые маски и классы для Mask2Former.
+    """Кодирование батча изображений процессором и формирование целевых масок и классов для Mask2Former.
     params:
         processor: процессор Mask2Former
         batch: список элементов датасета

@@ -11,10 +11,10 @@ def bce_dice_loss(
     dice_weight: float = 1.0,
     smooth: float = 1.0,
 ) -> torch.Tensor:
-    """Считает суммарный лосс BCE + Dice, как в EdgeAttNet.
+    """Подсче суммарного лосса BCE + Dice.
     params:
-        logits: логиты модели (B, 1, H, W)
-        target: бинарная маска (B, 1, H, W) из {0, 1}
+        logits: логиты модели 
+        target: бинарная маска
         bce_weight: вес BCE
         dice_weight: вес Dice
         smooth: сглаживание Dice для устойчивости на пустых масках

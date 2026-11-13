@@ -6,8 +6,7 @@ from pathlib import Path
 from src.models.edgeattn.build import ARCHS
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Строит CLI-парсер EdgeAttNet с подкомандами train и infer."""
+def build_parser() -> argparse.ArgumentParser:    
     p = argparse.ArgumentParser(prog="run.py edgeattn")
     sub = p.add_subparsers(dest="cmd", required=True)
 
