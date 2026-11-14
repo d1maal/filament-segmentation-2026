@@ -1,12 +1,17 @@
-numpy>=1.24
-opencv-python>=4.8
-pycocotools>=2.0.7
+# Versions used for the final Mask R-CNN run (Kaggle GPU image, Nov 2026).
+torch==2.11.0
+torchvision==0.26.0
+numpy>=1.26,<3
+opencv-python-headless>=4.10
+pycocotools>=2.0.8
+pandas>=2.2
+matplotlib>=3.8
 tqdm>=4.66
 python-dotenv>=1.0
-matplotlib>=3.8
+
+# Only for the earlier experiments (Mask2Former, MLflow/DagsHub logging):
 mlflow>=2.0
 dagshub>=0.3
-# Kaggle GPU only (torch is already there):
 transformers>=4.40
 accelerate>=0.30
 safetensors>=0.4

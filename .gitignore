@@ -17,3 +17,5 @@ wandb/
 
 # Special files
 *.lock
+
+# Released model weights are stored as weights/*.part-NN chunks; the assembled file is local only
