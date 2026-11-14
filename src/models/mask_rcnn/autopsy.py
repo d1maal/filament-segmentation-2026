@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import json
 from pathlib import Path
 
@@ -222,7 +223,13 @@ def run_autopsy(weights, limit=0, overlays=20, out_dir=None):
             "raw_candidates": len(raw_masks),
         }
         per_image.append(row)
-        overlay_items.append((float(metrics["pq"]), stem, image, gt, pred, used_g, used_p, row))
+        # keep only the `overlays` worst images in memory (full-resolution masks are large)
+        key = (-float(metrics["pq"]), row["fn"], row["fp"], image_index)
+        item = (key, (float(metrics["pq"]), stem, image, gt, pred, used_g, used_p, row))
+        if len(overlay_items) < int(overlays):
+            heapq.heappush(overlay_items, item)
+        elif int(overlays) > 0 and key > overlay_items[0][0]:
+            heapq.heapreplace(overlay_items, item)
 
     summary = aggregate(metric_rows)
     pre_summary = aggregate(pre_disjoint_rows)
@@ -239,7 +246,7 @@ def run_autopsy(weights, limit=0, overlays=20, out_dir=None):
         }
     )
 
-    overlay_items.sort(key=lambda item: (item[0], -item[7]["fn"], -item[7]["fp"]))
+    overlay_items = [item for _, item in sorted(overlay_items, reverse=True)]
     saved = []
     for rank, item in enumerate(overlay_items[: int(overlays)], 1):
         pq, stem, image, gt, pred, used_g, used_p, row = item
