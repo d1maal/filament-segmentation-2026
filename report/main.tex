@@ -8,7 +8,7 @@
 
 \begin{document}
 
-\title[Mask R-CNN for Solar Filament Segmentation]{Mask R-CNN with Test-Time Augmentation and Overlap-Free Post-Processing for Solar Filament Segmentation}
+\title[Mask R-CNN for Solar Filament Segmentation]{Mask R-CNN with Overlap-Free Post-Processing for Solar Filament Segmentation}
 \subtitle{A Solution to the Solar Filament Segmentation Challenge 2026} % DO NOT CHANGE
 
 \author{Daria Repkina}
@@ -34,7 +34,7 @@
 }
 
 \begin{abstract}
-    This report describes our solution to the Solar Filament Segmentation Challenge~2026, a Kaggle competition on automatic segmentation of solar filaments in GONG H-$\alpha$ observations. We use a Mask R-CNN with a ResNet-50-FPN backbone and GroupNorm, trained from random initialisation on full $2048\times2048$ images rescaled to 1344~px. The input is a three-channel stack of the raw image, a CLAHE-equalised copy and a high-pass layer. At test time the model is run on eight dihedral views of the image; the candidate masks are filtered, duplicates are merged, and every pixel is assigned to at most one filament. The final model reaches a panoptic quality (PQ) of 0.423 (95\% bootstrap interval 0.411--0.435) on our held-out validation split of 387 annotated images and 0.35 on the public leaderboard. Code, weights and a notebook that reproduces the submission are publicly available.
+    This report describes our solution to the Solar Filament Segmentation Challenge~2026, a Kaggle competition on automatic segmentation of solar filaments in GONG H-$\alpha$ observations. We use a Mask R-CNN with a ResNet-50-FPN backbone and GroupNorm, trained without ImageNet pre-training on full $2048\times2048$ images rescaled to 1344~px. The input is a three-channel stack of the raw image, a CLAHE-equalised copy and a high-pass layer. At test time the candidate masks are filtered, duplicates are merged, and every pixel is assigned to at most one filament. The final model reaches a panoptic quality (PQ) of 0.423 (95\% bootstrap interval 0.411--0.435) on our held-out validation split of 387 annotated images and 0.37 on the public leaderboard. Test-time augmentation with four or eight views increased the number of false positives and lowered PQ on both the validation split and the leaderboard (0.36 and 0.35), so the submission uses a single forward pass. Code, weights and a notebook that reproduces the submission are publicly available.
 \end{abstract}
 
 \maketitle
@@ -58,13 +58,13 @@
     The model is trained for 42 epochs with batch size 1 using AdamW~\cite{loshchilov2019adamw} (learning rate $1.5\times10^{-4}$, weight decay $10^{-4}$), a linear warm-up over two epochs and cosine decay to $5\times10^{-6}$, gradient clipping at 5 and mixed precision. Augmentations: random rotation by a multiple of 90$^\circ$, horizontal and vertical flips, brightness/contrast jitter ($\times U(0.85,1.15)$, $+U(-0.06,0.06)$, $p=0.7$), gamma $U(0.8,1.25)$ ($p=0.5$) and Gaussian noise with $\sigma\le0.02$ ($p=0.3$). Weights were initialised from our previous Mask R-CNN run with the same backbone (217 of 223 tensors match), which itself was trained from scratch on the same split. PQ is computed on 50 validation images after every epoch and on the whole validation set every six epochs from epoch 18; the checkpoint with the best full-validation PQ (epoch 36) is the released model. Averaging the weights of the last five epochs~\cite{izmailov2018swa} gave a slightly lower PQ (0.422 vs.\ 0.423) and was not used. Training takes about 8~h on one NVIDIA T4 (Kaggle).
 
 \subsection{Inference and post-processing}
-    \textit{Test-time augmentation.} The image is passed through the network in eight views (identity, rotations by 90$^\circ$, 180$^\circ$, 270$^\circ$, horizontal and vertical flips, transpose, anti-transpose). Each predicted soft mask is mapped back to the original orientation, and the candidates of all views are pooled.
+    The final submission uses one forward pass per image at 1344~px. Test-time augmentation was tested and not used (Section~\ref{sec:tta}).
 
     \textit{Candidate filtering.} A candidate is kept if its detection score is at least 0.55 and its binary mask ($p\ge0.5$) covers at least 150 pixels. Each candidate gets a quality score $q = s \cdot c^{0.5} \cdot t^{0.25}$, where $s$ is the detection score, $c$ is the mean mask probability inside the binary mask, and $t$ is the stability ratio $|p\ge0.55|/|p\ge0.45|$.
 
     \textit{Duplicate merging.} Candidates are visited in decreasing order of $q$. A candidate whose binary mask has IoU $\ge0.6$ with an already kept mask, or lies at least 90\% inside it, is merged into that mask by a $q$-weighted average of the soft masks.
 
-    \textit{Overlap removal.} Overlapping predictions are not allowed in the submission. Every pixel claimed by several masks is assigned to the mask with the largest $\operatorname{logit}(p) + 0.35\,\operatorname{logit}(q)$. Masks that keep less than 10\% of their original area or fall below 150 pixels are removed, and the assignment is repeated until no mask is removed. The masks are encoded as COCO RLE counts. Inference with eight views and post-processing takes 11.5~s per test image on a T4 (180 test images in 35~min).
+    \textit{Overlap removal.} Overlapping predictions are not allowed in the submission. Every pixel claimed by several masks is assigned to the mask with the largest $\operatorname{logit}(p) + 0.35\,\operatorname{logit}(q)$. Masks that keep less than 10\% of their original area or fall below 150 pixels are removed, and the assignment is repeated until no mask is removed. The masks are encoded as COCO RLE counts.
 
     Figure~\ref{fig:pipeline} summarises the pipeline.
 
@@ -76,15 +76,13 @@
   arr/.style={-{Latex[length=1.5mm]}, semithick}]
 \node[box] (in) {H$\alpha$ image\\2048$\times$2048, gray};
 \node[box, right=3mm of in] (pre) {raw + CLAHE\\+ high-pass};
-\node[box, right=3mm of pre] (tta) {8 dihedral\\views};
-\node[box=20mm, below=5mm of tta] (net) {Mask R-CNN\\R50-FPN-GN, 1344 px};
-\node[box, left=3mm of net] (inv) {inverse transform,\\pool candidates};
-\node[box, left=3mm of inv] (filt) {score $\ge$ 0.55\\area $\ge$ 150 px};
-\node[box, below=5mm of filt] (dup) {merge duplicates\\(IoU $\ge$ 0.6)};
-\node[box, right=3mm of dup] (dis) {pixel-wise\\overlap removal};
-\node[box=20mm, right=3mm of dis] (out) {RLE CSV,\\one row/filament};
-\draw[arr] (in) -- (pre); \draw[arr] (pre) -- (tta); \draw[arr] (tta) -- (net);
-\draw[arr] (net) -- (inv); \draw[arr] (inv) -- (filt); \draw[arr] (filt) -- (dup);
+\node[box=20mm, right=3mm of pre] (net) {Mask R-CNN\\R50-FPN-GN, 1344 px};
+\node[box, below=5mm of in] (filt) {score $\ge$ 0.55\\area $\ge$ 150 px};
+\node[box, right=3mm of filt] (dup) {merge duplicates\\(IoU $\ge$ 0.6)};
+\node[box=20mm, right=3mm of dup] (dis) {pixel-wise\\overlap removal};
+\node[box=20mm, below=5mm of dis] (out) {RLE CSV,\\one row/filament};
+\draw[arr] (in) -- (pre); \draw[arr] (pre) -- (net);
+\draw[arr] (net.south) -- ++(0,-2mm) -| (filt.north); \draw[arr] (filt) -- (dup);
 \draw[arr] (dup) -- (dis); \draw[arr] (dis) -- (out);
 \end{tikzpicture}
 \caption{Inference pipeline. Training uses the same pre-processing and network with random dihedral and photometric augmentation.}
@@ -94,15 +92,16 @@
 \section{Evaluation}\label{sec:evaluation}
 
 \subsection{Strategy}
-    We use the competition metric on our validation split: predicted and ground-truth filaments are matched one-to-one at IoU $\ge0.5$, and $\mathrm{PQ}=\sum_{\mathrm{TP}}\mathrm{IoU}/(|\mathrm{TP}|+0.5|\mathrm{FP}|+0.5|\mathrm{FN}|)$ is accumulated over all 387 validation images. Uncertainty is estimated by bootstrap over validation images (5000 resamples). We also report splits (one ground-truth filament covered by several predictions) and merges (one prediction covering several ground-truth filaments). Validation numbers below are for single-view inference; the submission uses eight-view TTA.
+    We use the competition metric on our validation split: predicted and ground-truth filaments are matched one-to-one at IoU $\ge0.5$, and $\mathrm{PQ}=\sum_{\mathrm{TP}}\mathrm{IoU}/(|\mathrm{TP}|+0.5|\mathrm{FP}|+0.5|\mathrm{FN}|)$ is accumulated over all 387 validation images. Uncertainty is estimated by bootstrap over validation images (5000 resamples). We also report splits (one ground-truth filament covered by several predictions) and merges (one prediction covering several ground-truth filaments). Unless stated otherwise, validation numbers are for single-view inference, the setting of the final submission.
 
 \subsection{Results}
-    Table~\ref{tab:models} lists the main models we trained. Moving from Mask2Former to Mask R-CNN gave the largest gain; the later Mask R-CNN versions added GroupNorm and elongated anchors (v2), the Dice term and the deeper mask head (v3), and TTA with the post-processing above (v5).
+    Table~\ref{tab:models} lists the main models we trained. Moving from Mask2Former to Mask R-CNN gave the largest gain; the later Mask R-CNN versions added GroupNorm and elongated anchors (v2), the Dice term and the deeper mask head (v3), and a longer schedule with the post-processing above (v5).
 
 \begin{table}[t]
 \caption{Models trained during the competition. Home PQ: our validation split (387 images); LB: public leaderboard.}
 \label{tab:models}
 \small
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
 Model & Input, px & Home PQ & LB PQ \\
@@ -112,7 +111,7 @@ Edge Attention Net & -- & -- & 0.22 \\
 Mask R-CNN v1 & 1024 & 0.345 & 0.28 \\
 \quad v2: + GN, elongated anchors & 1280 & 0.391 & 0.34 \\
 \quad v3: + Dice, 6-conv mask head & 1344 & 0.417 & -- \\
-\quad \textbf{v5: + 8-view TTA (final)} & 1344 & \textbf{0.423} & \textbf{0.35} \\
+\quad \textbf{v5: 42 epochs (final)} & 1344 & \textbf{0.423} & \textbf{0.37} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -150,12 +149,31 @@ Per-image PQ, median (IQR) & 0.421 (0.339--0.508) \\
 \label{fig:val}
 \end{figure}
 
+\subsection{Test-time augmentation}\label{sec:tta}
+    We evaluated TTA with the same weights and post-processing: the image is passed through the network in four views (identity, horizontal and vertical flips, rotation by 180$^\circ$) or eight views (all dihedral transforms), each soft mask is mapped back to the original orientation, and the candidates of all views are pooled before filtering and duplicate merging. All three settings were scored from the same forward passes on the full validation split and submitted to the leaderboard (Table~\ref{tab:tta}). TTA finds more filaments (95 more true positives with eight views) but adds 553 false positives and almost doubles the number of split filaments (82 to 150). A likely reason is that detections of the same filament from different views cover different parts of it and overlap by less than the merge threshold, so the overlap removal cuts the filament into pieces instead of merging them. Both the validation PQ and the leaderboard score decrease with the number of views, so the final submission uses a single view, which also needs one forward pass instead of eight.
+
+\begin{table}[t]
+\caption{Inference settings with the same weights. Validation: 387 images; LB: public leaderboard.}
+\label{tab:tta}
+\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Views & Home PQ & TP & FP & FN & Splits & LB PQ \\
+\midrule
+\textbf{1 (final)} & \textbf{0.4235} & 1912 & 1278 & 921 & 82 & \textbf{0.37} \\
+4 & 0.4126 & 1982 & 1640 & 851 & 136 & 0.36 \\
+8 & 0.4047 & 2007 & 1831 & 826 & 150 & 0.35 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
 \subsection{Strengths, weaknesses and possible improvements}
     \textit{Strengths.} The model segments each filament as one instance in most cases (82 splits and 63 merges against 1912 matches), and the overlap removal guarantees a valid submission without manual cleaning. Training and inference run on a single 16~GB GPU.
 
-    \textit{Weaknesses.} False positives outnumber false negatives (1278 vs.\ 921), so the model is tuned towards recall more than the metric rewards. Matched masks still differ from the annotations at the boundaries (mean IoU 0.667); the working resolution of 1344~px instead of 2048~px limits how well thin structures can be traced. The validation PQ is 0.07 higher than the public leaderboard score; the same gap was observed for v2 (0.391 vs.\ 0.34), so it does not seem to be caused by the TTA, but we have no direct explanation for it. Gains between v3 and v5 (0.007 PQ) are smaller than the spread between neighbouring full-validation checkpoints (0.408--0.423), so we do not claim that the v5 changes are significant.
+    \textit{Weaknesses.} False positives outnumber false negatives (1278 vs.\ 921), so the model is tuned towards recall more than the metric rewards. Matched masks still differ from the annotations at the boundaries (mean IoU 0.667); the working resolution of 1344~px instead of 2048~px limits how well thin structures can be traced. The validation PQ is 0.05 higher than the public leaderboard score; a similar gap was observed for v2 (0.391 vs.\ 0.34), and we have no direct explanation for it. Gains between v3 and v5 (0.007 PQ) are smaller than the spread between neighbouring full-validation checkpoints (0.408--0.423), so we do not claim that the v5 changes are significant.
 
-    \textit{Improvements.} (1) Re-tuning the selector thresholds jointly with TTA, in particular the detection score and the number of agreeing views, should reduce false positives. (2) Inference on overlapping tiles at full 2048~px resolution would help thin structures. (3) Using the agreement between annotators of the same observation as soft targets could reduce the influence of annotation noise.
+    \textit{Improvements.} (1) A higher detection-score threshold or a learned rescoring of the candidates should reduce false positives; TTA would need a merge rule that joins partial detections of the same filament instead of cutting them. (2) Inference on overlapping tiles at full 2048~px resolution would help thin structures. (3) Using the agreement between annotators of the same observation as soft targets could reduce the influence of annotation noise.
 
 \section{Acknowledgment}\label{sec:acknowledgment}
     % Do not change
