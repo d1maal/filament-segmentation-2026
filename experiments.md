@@ -13,7 +13,7 @@ Home PQ on frozen val (whole disks). Train: random crop; infer: full 2048 → mo
 | mrcnn-v1-1024 | 2026-09-24/10-01 | 1024 | 20 | — | **0.3447** | 1712 | 1799 | 1121 | Mask R-CNN ResNet50-FPN. Public LB ~0.28 after noolap. See `outputs/mask_rcnn_submit/dasha_report/`. |
 | mrcnn-v2-1280 | 2026-10-07 | 1280 | 30 | — | **0.3914** | | | | GN + elongated anchors + `enforce_disjoint`. Public LB 0.34. |
 | mrcnn-v3-1344 | 2026-10-12 | 1344 | 36 (stopped at 34) | 0.614 | **0.4166** (ep 30) | | | | mask BCE+Dice, 6-conv mask head, SWA. Run died at epoch 34: disk full (full checkpoint every epoch). |
-| **mrcnn-v5-1344** | 2026-11-13 | 1344 | 42 | 0.600 | **0.4235** (ep 36) | 1912 | 1278 | 921 | `ed857d3`. 8-view TTA + vote-based selector, model-only checkpoints. SWA(last 5) 0.4223. Public LB **0.35** (final). Weights: `weights/mask_rcnn_v5_best.pt`. |
+| **mrcnn-v5-1344** | 2026-11-13 | 1344 | 42 | 0.600 | **0.4235** (ep 36) | 1912 | 1278 | 921 | `ed857d3`. Model-only checkpoints. SWA(last 5) 0.4223. Same weights, three inference settings: no TTA home 0.4235 / LB **0.37** (final), 4-view TTA 0.4126 / 0.36, 8-view TTA 0.4047 / 0.35. Weights: `weights/mask_rcnn_v5_best.pt`. |
 
 ## Commands
 

@@ -4,15 +4,16 @@ Runs the released checkpoint once per validation image with all 8 TTA views and
 scores three inference settings from the same forward passes:
   none  - identity view only
   light - identity, hflip, vflip, rot180
-  full  - all 8 views (setting used for the final submission)
+  full  - all 8 views
+The final submission uses "none" (public LB 0.37; light 0.36, full 0.35).
 
 Outputs (default: outputs/report/):
   per_image_<mode>.csv   PQ, TP, FP, FN, splits, merges per validation image
-  matches_full.csv       IoU and Dice of every matched (TP) instance, full TTA
+  matches_<mode>.csv     IoU and Dice of every matched (TP) instance
   summary.json           aggregated metrics per mode
-  overlays/*.png         ground truth (green) vs prediction (red) for selected images
+  overlays/*.png         ground truth (green) vs prediction (red), --overlay-mode setting
 
-    python scripts/evaluate_val.py --limit 0
+    python scripts/evaluate_val.py --limit 0 --overlay-mode none
 """
 from __future__ import annotations
 
@@ -37,7 +38,7 @@ from src.config import config as project_config
 from src.metrics import aggregate, panoptic_quality
 from src.models.mask_rcnn.config import config as mcfg
 from src.models.mask_rcnn.dataset import FilamentMaskRCNNDataset
-from src.models.mask_rcnn.infer import load_checkpoint, postprocess_prepared, prepare_tta
+from src.models.mask_rcnn.infer import load_checkpoint, postprocess_prepared, predict_masks, prepare_tta
 
 MODES = {
     "none": {"identity"},
@@ -99,6 +100,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="0 = all validation images")
     ap.add_argument("--out", default=str(Path(project_config.outputs_path) / "report"))
+    ap.add_argument("--overlay-mode", choices=list(MODES), default="none")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -109,7 +111,7 @@ def main():
     n = len(ds) if not args.limit else min(args.limit, len(ds))
 
     rows = {m: [] for m in MODES}
-    matches = []
+    matches = {m: [] for m in MODES}
     keep = []  # (pq_full, index) to pick overlay examples
     t_infer = []
     for i in tqdm(range(n), desc="val"):
@@ -128,9 +130,9 @@ def main():
             r = panoptic_quality(gt, pred)
             r.update({"stem": stem, "n_gt": len(gt), "n_pred": len(pred)})
             rows[mode].append(r)
-            if mode == "full":
-                for iou, dice, area in match_ious(gt, pred):
-                    matches.append({"stem": stem, "iou": iou, "dice": dice, "gt_area": area})
+            for iou, dice, area in match_ious(gt, pred):
+                matches[mode].append({"stem": stem, "iou": iou, "dice": dice, "gt_area": area})
+            if mode == args.overlay_mode:
                 keep.append((r["pq"], i))
 
     summary = {}
@@ -145,10 +147,28 @@ def main():
             w.writerows(rs)
     summary["seconds_per_image_8_views"] = float(np.mean(t_infer)) if t_infer else None
     summary["device"] = torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu"
-    with open(out / "matches_full.csv", "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["stem", "iou", "dice", "gt_area"])
-        w.writeheader()
-        w.writerows(matches)
+    t_single = []
+    for i in range(min(20, n)):  # single-view timing, the final inference setting
+        image, _ = ds[i]
+        t0 = time.time()
+        predict_masks(model, image, device, tta=False)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t_single.append(time.time() - t0)
+    summary["seconds_per_image_1_view"] = float(np.mean(t_single[1:] or t_single)) if t_single else None
+    for mode, ms in matches.items():
+        with open(out / f"matches_{mode}.csv", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["stem", "iou", "dice", "gt_area"])
+            w.writeheader()
+            w.writerows(ms)
+        if ms:
+            iou = np.array([m["iou"] for m in ms])
+            dice = np.array([m["dice"] for m in ms])
+            q = [10, 25, 50, 75, 90]
+            summary[mode]["matched_iou_mean"] = float(iou.mean())
+            summary[mode]["matched_iou_q"] = dict(zip(map(str, q), np.percentile(iou, q).round(4).tolist()))
+            summary[mode]["matched_dice_mean"] = float(dice.mean())
+            summary[mode]["matched_dice_q"] = dict(zip(map(str, q), np.percentile(dice, q).round(4).tolist()))
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
 
@@ -162,7 +182,8 @@ def main():
             stem = Path(ds.rows[i][0]["file_name"]).stem
             prepared = prepare_tta(model, image, device, transforms=mcfg.tta_transforms_full,
                                    score_floor=mcfg.score_threshold)
-            pred = postprocess_prepared(prepared)
+            views = MODES[args.overlay_mode]
+            pred = postprocess_prepared([p for p in prepared if p["sources"] <= views])
             gt = [m.numpy().astype(np.uint8) for m in target["masks"]]
             overlay(image, gt, pred, stem, out / "overlays" / f"{name}_pq{pq:.2f}_{stem}.png")
         print("overlays:", sorted(p.name for p in (out / "overlays").iterdir()))

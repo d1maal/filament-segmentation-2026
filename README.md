@@ -3,8 +3,9 @@
 Team code for the Kaggle competition [filament-segmentation-2026](https://www.kaggle.com/competitions/filament-segmentation-2026)
 (instance segmentation of solar filaments in GONG H-alpha images, MAGFiLO annotations).
 
-**Final submission:** Mask R-CNN (ResNet-50-FPN with GroupNorm), 1344 px input, 8-view TTA, non-overlapping masks.
-Home validation PQ 0.4235 (387 images), public leaderboard PQ 0.35.
+**Final submission:** Mask R-CNN (ResNet-50-FPN with GroupNorm), 1344 px input, single view (no TTA), non-overlapping masks.
+Home validation PQ 0.4235 (387 images), public leaderboard PQ 0.37.
+The submitted file is `submissions/submission_mask_rcnn_v5_notta.csv`.
 
 ## Reproducing the submission
 
@@ -22,7 +23,7 @@ The checkpoint (188 MB, SHA-256 `c7638d6e…f3b6`) is stored as four chunks unde
 
 ```bash
 python weights/assemble.py
-python -m src.models.mask_rcnn.submission --weights weights/mask_rcnn_v5_best.pt --tta full \
+python -m src.models.mask_rcnn.submission --weights weights/mask_rcnn_v5_best.pt --tta none \
        --output outputs/submission_mask_rcnn_v5.csv
 ```
 
@@ -37,7 +38,7 @@ On Kaggle: GPU T4, Internet on, Add Data = the competition, clone the repo into 
 | Augmentation | random 90° rotation, h/v flips; brightness/contrast, gamma, Gaussian noise | `src/models/mask_rcnn/dataset.py` |
 | Model | Mask R-CNN, ResNet-50-FPN + GroupNorm (trained from scratch), anchors 16–256 px with aspect ratios 1/8…8, 4-conv box head, 6-conv mask head on 32×32 RoIs, BCE + 0.5·Dice mask loss | `src/models/mask_rcnn/model.py`, `losses.py` |
 | Training | 42 epochs, AdamW 1.5e-4, 2-epoch warm-up + cosine to 5e-6, AMP, batch 1, best epoch by full-val PQ | `src/models/mask_rcnn/train.py` |
-| Inference | 8 views (identity, 3 rotations, 2 flips, transpose, anti-transpose), masks mapped back | `src/models/mask_rcnn/infer.py` |
+| Inference | single forward pass at 1344 px (final). Optional TTA: 4 or 8 views (rotations, flips, transposes), masks mapped back; it lowered the score, see Results | `src/models/mask_rcnn/infer.py` |
 | Selection | score ≥ 0.55, area ≥ 150 px, quality = score × mask confidence × stability, weighted merge of duplicates (mask IoU ≥ 0.6) | `infer.py::postprocess_prepared` |
 | No overlaps | each contested pixel goes to the mask with the highest logit(p) + 0.35·logit(quality); masks keeping < 10 % of their area are dropped | `infer.py::_make_disjoint` |
 | Output | RLE counts (pycocotools), one row per filament | `src/models/mask_rcnn/submission.py` |
@@ -68,7 +69,12 @@ notebooks/archive/                   executed Kaggle notebooks from earlier runs
 | Edge Attention Net | — | 0.22 |
 | Mask R-CNN v1, 1024 px | 0.345 | 0.28 |
 | Mask R-CNN v2, 1280 px | 0.391 | 0.34 |
-| **Mask R-CNN v5, 1344 px** | **0.4235** | **0.35** |
+| Mask R-CNN v5, 1344 px, 8-view TTA | 0.4047 | 0.35 |
+| Mask R-CNN v5, 1344 px, 4-view TTA | 0.4126 | 0.36 |
+| **Mask R-CNN v5, 1344 px, no TTA (final)** | **0.4235** | **0.37** |
+
+TTA adds true positives (1912 → 2007 on validation) but more false positives (1278 → 1831) and more split filaments (82 → 150), so PQ drops.
+Validation numbers for all three settings come from `scripts/evaluate_val.py`.
 
 Details per run: [`experiments.md`](experiments.md).
 
